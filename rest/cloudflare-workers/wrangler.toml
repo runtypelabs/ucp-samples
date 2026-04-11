@@ -1,0 +1,13 @@
+name = "ucp-demo-server"
+main = "src/entry.py"
+compatibility_date = "2025-04-10"
+compatibility_flags = ["python_workers"]
+
+# Set CLOUDFLARE_ACCOUNT_ID env var or add account_id here
+# account_id = ""
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ucp-flower-shop"
+database_id = "local"
+migrations_dir = "migrations"
