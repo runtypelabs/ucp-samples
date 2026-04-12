@@ -96,6 +96,16 @@ HOME_HTML = """<!DOCTYPE html>
   .fulfillment-toggle button.active { background: var(--accent); color: white; font-weight: 600; }
   .fulfillment-toggle button:hover:not(.active) { color: var(--fg); }
 
+  /* Selected item indicator */
+  .selected-item-bar { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem; background: #1e3a5f; border: 1px solid var(--accent); border-radius: 6px; margin-bottom: 0.75rem; font-size: 0.8rem; }
+  .selected-item-bar .item-label { color: var(--accent); font-weight: 600; white-space: nowrap; }
+  .selected-item-bar .item-name { color: var(--fg); font-weight: 500; }
+  .selected-item-bar .item-id { color: var(--muted); font-family: monospace; font-size: 0.75rem; }
+  .selected-item-bar .item-clear { margin-left: auto; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 0.9rem; padding: 0 0.25rem; }
+  .selected-item-bar .item-clear:hover { color: var(--fg); }
+  .use-item-btn { display: inline-block; margin-top: 0.75rem; padding: 0.4rem 1rem; background: var(--green); color: white; border-radius: 6px; font-size: 0.8rem; font-weight: 600; cursor: pointer; border: none; }
+  .use-item-btn:hover { background: #16a34a; }
+
   /* Checkout tabs */
   .checkout-tabs { margin: 1rem 0; }
   .tab-bar { display: flex; justify-content: center; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 0; }
@@ -135,6 +145,12 @@ HOME_HTML = """<!DOCTYPE html>
   <div class="detail-panel" id="detailPanel"></div>
 
   <h2>Quick Start</h2>
+  <div class="selected-item-bar" id="selectedItemBar" style="display:none">
+    <span class="item-label">Using:</span>
+    <span class="item-name" id="selectedItemName"></span>
+    <span class="item-id" id="selectedItemId"></span>
+    <button class="item-clear" onclick="clearSelectedItem()" title="Reset to default">&times;</button>
+  </div>
 
   <div class="step">
     <div class="step-num">1</div>
@@ -178,20 +194,7 @@ HOME_HTML = """<!DOCTYPE html>
             <button class="active" onclick="setFulfillment('shipping', this)">Shipping</button>
             <button onclick="setFulfillment('pickup', this)">Pickup</button>
           </div>
-          <pre><code id="checkoutCurl">curl -X POST {{BASE}}/checkout-sessions \\
-  -H <span class="string">"Content-Type: application/json"</span> \\
-  -H <span class="string">'UCP-Agent: profile="https://agent.example/profile"'</span> \\
-  -H <span class="string">"request-signature: test"</span> \\
-  -H <span class="string">"idempotency-key: &lt;unique-key&gt;"</span> \\
-  -H <span class="string">"request-id: &lt;unique-id&gt;"</span> \\
-  -d <span class="string">'{
-  "line_items": [
-    {"item": {"id": "bouquet_roses", "title": "Roses"}, "quantity": 1}
-  ],
-  "buyer": {"full_name": "Jane Doe", "email": "jane@example.com"},
-  "fulfillment": {"methods": [{"type": "shipping", "destinations": [{"address_country": "US", "postal_code": "97201"}]}]},
-  "payment": {"instruments": []}
-}'</span></code></pre>
+          <pre><code id="checkoutCurl"></code></pre>
           <button class="try-btn" onclick="tryCheckout(this)">Try it</button>
           <div class="response-box"><pre><code></code></pre></div>
         </div>
@@ -203,18 +206,7 @@ HOME_HTML = """<!DOCTYPE html>
         <div class="step-content">
           <strong>Create a cart</strong>
           <p>Add items to a lightweight cart for exploration.</p>
-          <pre><code>curl -X POST {{BASE}}/carts \\
-  -H <span class="string">"Content-Type: application/json"</span> \\
-  -H <span class="string">'UCP-Agent: profile="https://agent.example/profile"'</span> \\
-  -H <span class="string">"request-signature: test"</span> \\
-  -H <span class="string">"idempotency-key: &lt;unique-key&gt;"</span> \\
-  -H <span class="string">"request-id: &lt;unique-id&gt;"</span> \\
-  -d <span class="string">'{
-  "line_items": [
-    {"item": {"id": "bouquet_roses"}, "quantity": 2},
-    {"item": {"id": "pot_ceramic"}, "quantity": 1}
-  ]
-}'</span></code></pre>
+          <pre><code id="cartCurl"></code></pre>
           <button class="try-btn" onclick="tryCart(this)">Try it</button>
           <div class="response-box"><pre><code></code></pre></div>
         </div>
@@ -280,9 +272,9 @@ HOME_HTML = """<!DOCTYPE html>
   <table>
     <tr><th>Header</th><th>Value</th><th>Required</th></tr>
     <tr><td><code>UCP-Agent</code></td><td><code>profile="https://agent.example/profile"</code></td><td>All requests</td></tr>
-    <tr><td><code>request-signature</code></td><td><code>test</code> (bypasses validation)</td><td>All requests</td></tr>
-    <tr><td><code>request-id</code></td><td>Any unique string</td><td>All requests</td></tr>
-    <tr><td><code>idempotency-key</code></td><td>Any unique string</td><td>POST / PUT (checkout)</td></tr>
+    <tr><td><code>Signature</code></td><td><code>sig=:test:</code> (bypasses validation)</td><td>All requests</td></tr>
+    <tr><td><code>Request-Id</code></td><td>Any unique string</td><td>All requests</td></tr>
+    <tr><td><code>Idempotency-Key</code></td><td>Any unique string</td><td>POST / PUT (checkout, cart)</td></tr>
   </table>
 
   <h2>Links</h2>
@@ -387,6 +379,30 @@ function renderPagination(pg) {
 
 let currentDetailProductId = null;
 let currentSelections = [];
+let currentDetailVariant = null;  // { id, title, productId, productTitle }
+
+// Selected item for cart/checkout (persists across detail panel close)
+let selectedItem = null;
+
+function setSelectedItem(itemId, title, variantTitle) {
+  selectedItem = { id: itemId, title: title, variantTitle: variantTitle };
+  const bar = document.getElementById('selectedItemBar');
+  document.getElementById('selectedItemName').textContent = variantTitle || title;
+  document.getElementById('selectedItemId').textContent = itemId;
+  bar.style.display = 'flex';
+  updateCurlExamples();
+}
+
+function clearSelectedItem() {
+  selectedItem = null;
+  document.getElementById('selectedItemBar').style.display = 'none';
+  updateCurlExamples();
+}
+
+function getItemForRequest() {
+  if (selectedItem) return { id: selectedItem.id, title: selectedItem.variantTitle || selectedItem.title };
+  return { id: 'bouquet_roses', title: 'Rose Bouquet' };
+}
 
 async function showDetail(productId, selected) {
   currentDetailProductId = productId;
@@ -423,6 +439,12 @@ async function showDetail(productId, selected) {
     const statusClass = avail && avail.available ? 'stock' : 'oos';
     const desc = p.description && p.description.plain ? p.description.plain : '';
 
+    // Track current variant for use-in-checkout
+    currentDetailVariant = variant ? {
+      id: variant.id, title: variant.title || variant.id,
+      productId: p.id, productTitle: p.title,
+    } : { id: p.id, title: p.title, productId: p.id, productTitle: p.title };
+
     // Build option picker UI
     let optionHtml = '';
     if (p.options && p.options.length > 0) {
@@ -443,14 +465,17 @@ async function showDetail(productId, selected) {
       optionHtml += '</div>';
     }
 
-    // Variant info
+    // Variant info + use button
     let variantHtml = '';
     if (variant) {
+      const hasOptions = p.options && p.options.length > 0;
+      const displayName = hasOptions ? (variant.title || variant.id) : p.title;
       variantHtml = '<div class="detail-variant-info">' +
         '<span class="variant-title">' + (variant.title || variant.id) + '</span>' +
         ' <span class="badge sm ' + statusClass + '">' + status + '</span>' +
         '<div class="variant-id">variant: ' + variant.id + (variant.sku ? ' &middot; SKU: ' + variant.sku : '') + '</div>' +
-      '</div>';
+      '</div>' +
+      '<button class="use-item-btn" onclick="useCurrentVariant()">Use in cart / checkout</button>';
     }
 
     panel.innerHTML =
@@ -466,10 +491,20 @@ async function showDetail(productId, selected) {
 }
 
 function selectOption(productId, optName, optLabel) {
-  // Update selections: replace existing selection for this option name, or add new one
   let newSelections = currentSelections.filter(s => s.name !== optName);
   newSelections.push({ name: optName, label: optLabel });
   showDetail(productId, newSelections);
+}
+
+function useCurrentVariant() {
+  if (!currentDetailVariant) return;
+  const v = currentDetailVariant;
+  // Use variant ID if product has options, otherwise product ID
+  const useId = v.id !== v.productId ? v.id : v.productId;
+  const displayTitle = v.id !== v.productId
+    ? v.productTitle + ' - ' + v.title
+    : v.productTitle;
+  setSelectedItem(useId, v.productTitle, displayTitle);
 }
 
 // --- Try-it buttons ---
@@ -506,14 +541,14 @@ async function tryCart(btn) {
   box.style.display = 'block';
   code.textContent = 'Loading...';
   const key = 'demo-cart-' + Date.now() + '-' + Math.random().toString(36).slice(2,8);
+  const item = getItemForRequest();
   try {
     const res = await fetch(BASE + '/carts', {
       method: 'POST',
       headers: { ...UCP_HEADERS, 'idempotency-key': key },
       body: JSON.stringify({
         line_items: [
-          {item: {id: 'bouquet_roses'}, quantity: 2},
-          {item: {id: 'pot_ceramic'}, quantity: 1},
+          {item: {id: item.id, title: item.title}, quantity: 2},
         ],
       }),
     });
@@ -561,6 +596,48 @@ function setFulfillment(mode, btn) {
   selectedFulfillment = mode;
   btn.parentElement.querySelectorAll('button').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
+  updateCurlExamples();
+}
+
+function updateCurlExamples() {
+  var item = getItemForRequest();
+  var NL = String.fromCharCode(10);
+  var BS = String.fromCharCode(92);
+
+  // Cart curl
+  var cartEl = document.getElementById('cartCurl');
+  if (cartEl) {
+    var cartBody = JSON.stringify({line_items: [{item: {id: item.id}, quantity: 2}]});
+    cartEl.textContent = [
+      'curl -X POST ' + BASE + '/carts ' + BS,
+      '  -H "Content-Type: application/json" ' + BS,
+      '  -H "Signature: sig=:test:" ' + BS,
+      '  -H "Idempotency-Key: <unique-key>" ' + BS,
+      '  -H "Request-Id: <unique-id>" ' + BS,
+      "  -d '" + cartBody + "'",
+    ].join(NL);
+  }
+
+  // Checkout curl
+  var checkoutEl = document.getElementById('checkoutCurl');
+  if (checkoutEl) {
+    var checkoutBody = {
+      line_items: [{item: {id: item.id, title: item.title}, quantity: 1}],
+      buyer: {full_name: 'Jane Doe', email: 'jane@example.com'},
+      fulfillment: selectedFulfillment === 'pickup'
+        ? {methods: [{type: 'pickup', destinations: [{name: 'Downtown Flower Shop'}]}]}
+        : {methods: [{type: 'shipping', destinations: [{address_country: 'US', postal_code: '97201'}]}]},
+      payment: {instruments: []},
+    };
+    checkoutEl.textContent = [
+      'curl -X POST ' + BASE + '/checkout-sessions ' + BS,
+      '  -H "Content-Type: application/json" ' + BS,
+      '  -H "Signature: sig=:test:" ' + BS,
+      '  -H "Idempotency-Key: <unique-key>" ' + BS,
+      '  -H "Request-Id: <unique-id>" ' + BS,
+      "  -d '" + JSON.stringify(checkoutBody, null, 2) + "'",
+    ].join(NL);
+  }
 }
 
 async function tryCheckout(btn) {
@@ -569,9 +646,10 @@ async function tryCheckout(btn) {
   box.style.display = 'block';
   code.textContent = 'Loading...';
   const key = 'demo-' + Date.now() + '-' + Math.random().toString(36).slice(2,8);
+  const item = getItemForRequest();
 
   const body = {
-    line_items: [{item: {id: 'bouquet_roses', title: 'Roses'}, quantity: 1}],
+    line_items: [{item: {id: item.id, title: item.title}, quantity: 1}],
     buyer: {full_name: 'Jane Doe', email: 'jane@example.com'},
     payment: {instruments: []},
   };
@@ -603,7 +681,8 @@ async function tryCheckout(btn) {
   } catch(e) { code.textContent = 'Error: ' + e.message; }
 }
 
-// Load catalog on page load
+// Initialize on page load
+updateCurlExamples();
 searchCatalog();
 </script>
 </body>
