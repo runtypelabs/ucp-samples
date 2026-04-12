@@ -136,6 +136,29 @@ HOME_HTML = """<!DOCTYPE html>
   <div class="step">
     <div class="step-num">3</div>
     <div class="step-content">
+      <strong>Create a cart</strong>
+      <p>Add items to a lightweight cart for pre-checkout exploration.</p>
+      <pre><code>curl -X POST {{BASE}}/carts \\
+  -H <span class="string">"Content-Type: application/json"</span> \\
+  -H <span class="string">'UCP-Agent: profile="https://agent.example/profile"'</span> \\
+  -H <span class="string">"request-signature: test"</span> \\
+  -H <span class="string">"idempotency-key: &lt;unique-key&gt;"</span> \\
+  -H <span class="string">"request-id: &lt;unique-id&gt;"</span> \\
+  -d <span class="string">'{
+  "line_items": [
+    {"item": {"id": "bouquet_roses"}, "quantity": 2},
+    {"item": {"id": "pot_ceramic"}, "quantity": 1}
+  ],
+  "currency": "USD"
+}'</span></code></pre>
+      <button class="try-btn" onclick="tryCart(this)">Try it</button>
+      <div class="response-box"><pre><code></code></pre></div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num">4</div>
+    <div class="step-content">
       <strong>Create a checkout</strong>
       <p>Start a checkout session with line items from the catalog.</p>
       <pre><code>curl -X POST {{BASE}}/checkout-sessions \\
@@ -158,7 +181,7 @@ HOME_HTML = """<!DOCTYPE html>
   </div>
 
   <div class="step">
-    <div class="step-num">4</div>
+    <div class="step-num">5</div>
     <div class="step-content">
       <strong>Apply a discount</strong>
       <p>Update the checkout with a discount code. Available codes:</p>
@@ -179,6 +202,11 @@ HOME_HTML = """<!DOCTYPE html>
     <tr><td><code>POST</code></td><td><code>/catalog/search</code></td><td>Search products</td></tr>
     <tr><td><code>POST</code></td><td><code>/catalog/lookup</code></td><td>Batch lookup by IDs</td></tr>
     <tr><td><code>POST</code></td><td><code>/catalog/product</code></td><td>Get product detail</td></tr>
+    <tr><td colspan="3" style="color:var(--accent);font-weight:600;font-size:0.8rem;padding-top:0.75rem;">CART</td></tr>
+    <tr><td><code>POST</code></td><td><code>/carts</code></td><td>Create cart</td></tr>
+    <tr><td><code>GET</code></td><td><code>/carts/{id}</code></td><td>Get cart</td></tr>
+    <tr><td><code>PUT</code></td><td><code>/carts/{id}</code></td><td>Update cart</td></tr>
+    <tr><td><code>POST</code></td><td><code>/carts/{id}/cancel</code></td><td>Cancel cart</td></tr>
     <tr><td colspan="3" style="color:var(--accent);font-weight:600;font-size:0.8rem;padding-top:0.75rem;">CHECKOUT</td></tr>
     <tr><td><code>POST</code></td><td><code>/checkout-sessions</code></td><td>Create checkout</td></tr>
     <tr><td><code>GET</code></td><td><code>/checkout-sessions/{id}</code></td><td>Get checkout</td></tr>
@@ -362,6 +390,29 @@ async function trySearch(btn) {
     const res = await fetch(BASE + '/catalog/search', {
       method: 'POST', headers: UCP_HEADERS,
       body: JSON.stringify({ query: 'roses', pagination: { limit: 5 } }),
+    });
+    const data = await res.json();
+    code.textContent = JSON.stringify(data, null, 2);
+  } catch(e) { code.textContent = 'Error: ' + e.message; }
+}
+
+async function tryCart(btn) {
+  const box = btn.nextElementSibling;
+  const code = box.querySelector('code');
+  box.style.display = 'block';
+  code.textContent = 'Loading...';
+  const key = 'demo-cart-' + Date.now() + '-' + Math.random().toString(36).slice(2,8);
+  try {
+    const res = await fetch(BASE + '/carts', {
+      method: 'POST',
+      headers: { ...UCP_HEADERS, 'idempotency-key': key },
+      body: JSON.stringify({
+        line_items: [
+          {item: {id: 'bouquet_roses'}, quantity: 2},
+          {item: {id: 'pot_ceramic'}, quantity: 1},
+        ],
+        currency: 'USD',
+      }),
     });
     const data = await res.json();
     code.textContent = JSON.stringify(data, null, 2);
