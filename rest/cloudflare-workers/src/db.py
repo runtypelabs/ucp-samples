@@ -294,6 +294,36 @@ async def get_product_detail(db, product_id):
   return result
 
 
+async def get_product_options(db, product_id):
+  """Get product options with their values, ordered by position."""
+  result = await db.prepare(
+    "SELECT po.name, pov.id as value_id, pov.label, pov.position "
+    "FROM product_options po "
+    "JOIN product_option_values pov ON po.product_id = pov.product_id AND po.name = pov.option_name "
+    "WHERE po.product_id = ? "
+    "ORDER BY po.position, pov.position"
+  ).bind(product_id).all()
+  return result.results if result else []
+
+
+async def get_product_variants(db, product_id):
+  """Get all variants for a product."""
+  result = await db.prepare(
+    "SELECT id, product_id, title, sku, price, available, options "
+    "FROM product_variants WHERE product_id = ?"
+  ).bind(product_id).all()
+  return result.results if result else []
+
+
+async def get_variant_by_id(db, variant_id):
+  """Look up a single variant by its ID, returns variant + product_id."""
+  result = await db.prepare(
+    "SELECT id, product_id, title, sku, price, available, options "
+    "FROM product_variants WHERE id = ?"
+  ).bind(variant_id).first()
+  return result
+
+
 # --- Carts ---
 
 

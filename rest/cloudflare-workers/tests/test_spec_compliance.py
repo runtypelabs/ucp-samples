@@ -1197,3 +1197,288 @@ class TestDiscountAmounts:
         # Should have exactly 1 applied discount, not 2
         assert len(checkout.discounts.applied) == 1, \
             f"F3: Expected 1 applied discount after recalc, got {len(checkout.discounts.applied)}"
+
+
+# ---------------------------------------------------------------------------
+# C3: Product detail with interactive option selection
+# Spec: catalog_lookup.json get_product_request (selected, preferences)
+#        and detail_product response (selected, options with available/exists)
+# ---------------------------------------------------------------------------
+
+
+class TestProductDetailOptionSelection:
+    """C3: Product detail interactive option selection compliance."""
+
+    def test_detail_product_response_has_selected_field(self):
+        from models import (
+            CatalogDetailProduct, CatalogPrice, CatalogPriceRange,
+            CatalogVariant, SelectedOption, DetailProductOption, DetailOptionValue,
+        )
+        product = CatalogDetailProduct(
+            id="prod-1", title="Rose Bouquet",
+            price_range=CatalogPriceRange(
+                min=CatalogPrice(amount=2500), max=CatalogPrice(amount=5000),
+            ),
+            variants=[CatalogVariant(id="v1", title="Red / Small", price=CatalogPrice(amount=2500))],
+            selected=[SelectedOption(name="Color", label="Red", id="roses_color_red")],
+            options=[DetailProductOption(name="Color", values=[
+                DetailOptionValue(id="roses_color_red", label="Red", available=True, exists=True),
+            ])],
+        )
+        data = product.model_dump(mode="json", exclude_none=True)
+        assert "selected" in data
+        assert data["selected"][0]["name"] == "Color"
+        assert data["selected"][0]["label"] == "Red"
+
+    def test_detail_product_options_have_availability_signals(self):
+        from models import (
+            CatalogDetailProduct, CatalogPrice, CatalogPriceRange,
+            CatalogVariant, SelectedOption, DetailProductOption, DetailOptionValue,
+        )
+        product = CatalogDetailProduct(
+            id="prod-1", title="Rose Bouquet",
+            price_range=CatalogPriceRange(
+                min=CatalogPrice(amount=2500), max=CatalogPrice(amount=5000),
+            ),
+            variants=[CatalogVariant(id="v1", title="Red / Small", price=CatalogPrice(amount=2500))],
+            selected=[SelectedOption(name="Color", label="Red")],
+            options=[DetailProductOption(name="Size", values=[
+                DetailOptionValue(id="s1", label="Small", available=True, exists=True),
+                DetailOptionValue(id="s2", label="Large", available=False, exists=True),
+                DetailOptionValue(id="s3", label="XL", available=False, exists=False),
+            ])],
+        )
+        data = product.model_dump(mode="json", exclude_none=True)
+        assert "options" in data
+        size_option = data["options"][0]
+        assert size_option["name"] == "Size"
+        assert len(size_option["values"]) == 3
+        # Check availability signals
+        small = size_option["values"][0]
+        assert small["available"] is True
+        assert small["exists"] is True
+        large = size_option["values"][1]
+        assert large["available"] is False
+        assert large["exists"] is True
+        xl = size_option["values"][2]
+        assert xl["available"] is False
+        assert xl["exists"] is False
+
+    def test_selected_option_model_has_required_fields(self):
+        from models import SelectedOption
+        opt = SelectedOption(name="Color", label="Red", id="roses_color_red")
+        data = opt.model_dump(mode="json", exclude_none=True)
+        assert data["name"] == "Color"
+        assert data["label"] == "Red"
+        assert data["id"] == "roses_color_red"
+
+    def test_catalog_product_request_selected_typed(self):
+        from models import CatalogProductRequest, SelectedOption
+        req = CatalogProductRequest(
+            id="bouquet_roses",
+            selected=[SelectedOption(name="Color", label="Red")],
+            preferences=["Color", "Size"],
+        )
+        data = req.model_dump(mode="json", exclude_none=True)
+        assert "selected" in data
+        assert data["selected"][0]["name"] == "Color"
+        assert "preferences" in data
+        assert data["preferences"] == ["Color", "Size"]
+
+    def test_variant_matching_algorithm(self):
+        """Test the variant matching with relaxation."""
+        from routes.catalog import _find_best_variant, SelectedOption
+
+        variants = [
+            {"id": "v1", "title": "Red/Small", "price": 2500, "available": True,
+             "options": [SelectedOption(name="Color", label="Red"), SelectedOption(name="Size", label="Small")]},
+            {"id": "v2", "title": "Red/Medium", "price": 3500, "available": True,
+             "options": [SelectedOption(name="Color", label="Red"), SelectedOption(name="Size", label="Medium")]},
+            {"id": "v3", "title": "Blue/Small", "price": 2500, "available": False,
+             "options": [SelectedOption(name="Color", label="Blue"), SelectedOption(name="Size", label="Small")]},
+        ]
+
+        # Exact match
+        result = _find_best_variant(variants, [SelectedOption(name="Color", label="Red"), SelectedOption(name="Size", label="Small")], [])
+        assert result["id"] == "v1"
+
+        # Match with relaxation: Blue/Medium doesn't exist, relax Size first
+        result = _find_best_variant(
+            variants,
+            [SelectedOption(name="Color", label="Blue"), SelectedOption(name="Size", label="Medium")],
+            ["Color", "Size"],  # Color is higher priority, relax Size first
+        )
+        # After relaxing Size, we look for just Color=Blue -> v3 (unavailable)
+        assert result["id"] == "v3"
+
+    def test_availability_signal_computation(self):
+        """Test exists/available computation for option values."""
+        from routes.catalog import _variant_exists_with, _variant_available_with, SelectedOption
+
+        variants = [
+            {"id": "v1", "available": True,
+             "options": [SelectedOption(name="Color", label="Red"), SelectedOption(name="Size", label="Small")]},
+            {"id": "v2", "available": True,
+             "options": [SelectedOption(name="Color", label="Red"), SelectedOption(name="Size", label="Large")]},
+            {"id": "v3", "available": False,
+             "options": [SelectedOption(name="Color", label="Blue"), SelectedOption(name="Size", label="Large")]},
+        ]
+
+        # With Color=Red selected, check Size options
+        other_selections = [SelectedOption(name="Color", label="Red")]
+
+        assert _variant_exists_with(variants, "Size", "Small", other_selections) is True
+        assert _variant_available_with(variants, "Size", "Small", other_selections) is True
+        assert _variant_exists_with(variants, "Size", "Large", other_selections) is True
+        assert _variant_available_with(variants, "Size", "Large", other_selections) is True
+
+        # With Color=Blue selected
+        other_selections = [SelectedOption(name="Color", label="Blue")]
+        assert _variant_exists_with(variants, "Size", "Small", other_selections) is False
+        assert _variant_exists_with(variants, "Size", "Large", other_selections) is True
+        assert _variant_available_with(variants, "Size", "Large", other_selections) is False  # v3 is unavailable
+
+
+# ---------------------------------------------------------------------------
+# F8: Pickup / retail_location destination support
+# Spec: fulfillment_destination.json oneOf [shipping_destination, retail_location]
+#        fulfillment_method.json type enum ["shipping", "pickup"]
+# ---------------------------------------------------------------------------
+
+
+class TestPickupFulfillment:
+    """F8: Pickup / retail_location fulfillment support."""
+
+    def test_retail_location_model(self):
+        from models import RetailLocation, PostalAddress
+        loc = RetailLocation(
+            id="store_1", name="Downtown Store",
+            address=PostalAddress(street_address="123 Main St", address_locality="Portland"),
+        )
+        data = loc.model_dump(mode="json", exclude_none=True)
+        assert data["id"] == "store_1"
+        assert data["name"] == "Downtown Store"
+        assert "address" in data
+        assert data["address"]["street_address"] == "123 Main St"
+
+    def test_fulfillment_method_accepts_pickup_type(self):
+        from models import FulfillmentMethodResponse, RetailLocation
+        method = FulfillmentMethodResponse(
+            id="m-1", type="pickup", line_item_ids=["li-1"],
+            destinations=[RetailLocation(id="store_1", name="Downtown Store")],
+            selected_destination_id="store_1",
+        )
+        data = method.model_dump(mode="json", exclude_none=True)
+        assert data["type"] == "pickup"
+        assert data["destinations"][0]["name"] == "Downtown Store"
+
+    def test_fulfillment_available_method_model(self):
+        from models import FulfillmentAvailableMethod
+        am = FulfillmentAvailableMethod(
+            type="pickup", line_item_ids=["li-1", "li-2"],
+            fulfillable_on="now", description="Available for in-store pickup",
+        )
+        data = am.model_dump(mode="json", exclude_none=True)
+        assert data["type"] == "pickup"
+        assert data["line_item_ids"] == ["li-1", "li-2"]
+        assert data["fulfillable_on"] == "now"
+        assert data["description"] == "Available for in-store pickup"
+
+    def test_pickup_options_are_free(self):
+        from services.fulfillment_service import FulfillmentService
+        svc = FulfillmentService()
+        options = svc.calculate_pickup_options()
+        assert len(options) == 1
+        assert options[0].id == "pickup_standard"
+        assert options[0].title == "In-store pickup"
+        total = next(t for t in options[0].totals if t.type == "total")
+        assert total.amount == 0
+
+    def test_pickup_fulfillment_in_checkout(self):
+        """Verify checkout with pickup method produces zero fulfillment cost."""
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from services.checkout_service import CheckoutService
+        from services.fulfillment_service import FulfillmentService
+        from models import (
+            Checkout, ResponseCheckout, PaymentResponse,
+            FulfillmentResponse, FulfillmentMethodResponse, FulfillmentGroupResponse,
+            FulfillmentOptionResponse, RetailLocation,
+            LineItemResponse, ItemResponse, TotalResponse,
+        )
+
+        service = CheckoutService(FulfillmentService(), MagicMock(), "https://shop.example.com")
+
+        checkout = Checkout(
+            ucp=ResponseCheckout(version="2026-04-08"),
+            id="ck-1", currency="USD",
+            line_items=[
+                LineItemResponse(id="li-1", item=ItemResponse(id="prod-1", title="Rose", price=2000), quantity=1, totals=[]),
+            ],
+            totals=[],
+            payment=PaymentResponse(instruments=[]),
+            fulfillment=FulfillmentResponse(methods=[
+                FulfillmentMethodResponse(
+                    id="m-1", type="pickup", line_item_ids=["li-1"],
+                    destinations=[RetailLocation(id="store_downtown", name="Downtown Flower Shop")],
+                    selected_destination_id="store_downtown",
+                    groups=[FulfillmentGroupResponse(
+                        id="g-1", line_item_ids=["li-1"],
+                        selected_option_id="pickup_standard",
+                    )],
+                ),
+            ]),
+        )
+
+        with patch("db.get_product", new=AsyncMock(return_value=MagicMock(price=2000, title="Rose"))), \
+             patch("db.get_active_promotions", new=AsyncMock(return_value=[])):
+
+            asyncio.run(service._recalculate_totals(checkout))
+
+        # Fulfillment should be free for pickup
+        fulfillment_totals = [t for t in checkout.totals if t.type == "fulfillment"]
+        assert len(fulfillment_totals) == 1
+        assert fulfillment_totals[0].amount == 0
+        assert "pickup" in fulfillment_totals[0].display_text.lower()
+
+        # Grand total = subtotal only (no shipping cost added)
+        grand_total = next(t for t in checkout.totals if t.type == "total")
+        assert grand_total.amount == 2000
+
+
+# ---------------------------------------------------------------------------
+# CK7: line_items required on checkout create (no default empty list)
+# Spec: checkout.json line_items ucp_request.create = "required"
+# ---------------------------------------------------------------------------
+
+
+class TestLineItemsRequired:
+    """CK7: line_items must be required on CheckoutCreateRequest."""
+
+    def test_line_items_field_has_no_default(self):
+        from models import CheckoutCreateRequest
+        field = CheckoutCreateRequest.model_fields["line_items"]
+        assert field.default is None or not hasattr(field, "default") or field.is_required(), \
+            "line_items must be required (no default value)"
+
+    def test_missing_line_items_raises_validation_error(self):
+        from models import CheckoutCreateRequest
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            CheckoutCreateRequest(buyer={"email": "test@test.com"})
+
+    def test_empty_line_items_is_accepted(self):
+        """Empty list is valid - spec has no minItems constraint for create."""
+        from models import CheckoutCreateRequest
+        req = CheckoutCreateRequest(line_items=[])
+        assert req.line_items == []
+
+    def test_cart_to_checkout_still_works_with_required_line_items(self):
+        """Cart flow provides line_items in request body, so it still works."""
+        from models import CheckoutCreateRequest, LineItemRequest, ItemRequest
+        req = CheckoutCreateRequest(
+            cart_id="cart-123",
+            line_items=[],  # Will be overridden by cart contents
+        )
+        assert req.cart_id == "cart-123"
+        assert req.line_items == []

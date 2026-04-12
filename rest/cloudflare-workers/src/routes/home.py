@@ -75,6 +75,27 @@ HOME_HTML = """<!DOCTYPE html>
   .detail-json summary { color: var(--accent); cursor: pointer; font-size: 0.85rem; }
   .detail-json pre { max-height: 250px; overflow-y: auto; margin-top: 0.5rem; }
 
+  /* Option picker */
+  .option-picker { margin: 1rem 0; display: flex; flex-wrap: wrap; gap: 1rem; }
+  .option-group { display: flex; flex-direction: column; gap: 0.4rem; }
+  .option-group .option-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; }
+  .option-values { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+  .option-chip { padding: 0.35rem 0.75rem; border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem; cursor: pointer; background: var(--bg); color: var(--fg); transition: all 0.15s; }
+  .option-chip:hover { border-color: var(--accent); }
+  .option-chip.selected { background: var(--accent); border-color: var(--accent); color: white; font-weight: 600; }
+  .option-chip.unavailable { opacity: 0.4; text-decoration: line-through; }
+  .option-chip.unavailable.selected { opacity: 0.7; }
+  .option-chip.no-exist { opacity: 0.2; cursor: not-allowed; }
+  .detail-variant-info { margin-top: 0.75rem; padding: 0.75rem; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem; }
+  .detail-variant-info .variant-title { font-weight: 600; color: var(--fg); }
+  .detail-variant-info .variant-id { font-family: monospace; font-size: 0.75rem; color: var(--muted); }
+
+  /* Fulfillment toggle */
+  .fulfillment-toggle { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin: 0.5rem 0; }
+  .fulfillment-toggle button { flex: 1; padding: 0.5rem 1rem; background: var(--bg); border: none; color: var(--muted); font-size: 0.85rem; cursor: pointer; transition: all 0.15s; }
+  .fulfillment-toggle button.active { background: var(--accent); color: white; font-weight: 600; }
+  .fulfillment-toggle button:hover:not(.active) { color: var(--fg); }
+
   /* Checkout tabs */
   .checkout-tabs { margin: 1rem 0; }
   .tab-bar { display: flex; justify-content: center; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 0; }
@@ -152,8 +173,12 @@ HOME_HTML = """<!DOCTYPE html>
         <div class="step-num">3</div>
         <div class="step-content">
           <strong>Create a checkout</strong>
-          <p>Go straight to checkout with line items.</p>
-          <pre><code>curl -X POST {{BASE}}/checkout-sessions \\
+          <p>Go straight to checkout with line items. Choose a fulfillment method:</p>
+          <div class="fulfillment-toggle">
+            <button class="active" onclick="setFulfillment('shipping', this)">Shipping</button>
+            <button onclick="setFulfillment('pickup', this)">Pickup</button>
+          </div>
+          <pre><code id="checkoutCurl">curl -X POST {{BASE}}/checkout-sessions \\
   -H <span class="string">"Content-Type: application/json"</span> \\
   -H <span class="string">'UCP-Agent: profile="https://agent.example/profile"'</span> \\
   -H <span class="string">"request-signature: test"</span> \\
@@ -164,6 +189,7 @@ HOME_HTML = """<!DOCTYPE html>
     {"item": {"id": "bouquet_roses", "title": "Roses"}, "quantity": 1}
   ],
   "buyer": {"full_name": "Jane Doe", "email": "jane@example.com"},
+  "fulfillment": {"methods": [{"type": "shipping", "destinations": [{"address_country": "US", "postal_code": "97201"}]}]},
   "payment": {"instruments": []}
 }'</span></code></pre>
           <button class="try-btn" onclick="tryCheckout(this)">Try it</button>
@@ -278,8 +304,8 @@ const BASE = window.location.origin;
 const UCP_HEADERS = {
   'Content-Type': 'application/json',
   'UCP-Agent': 'profile="https://agent.example/profile"',
-  'request-signature': 'test',
-  'request-id': 'homepage-' + Date.now(),
+  'Signature': 'sig=:test:',
+  'Request-Id': 'homepage-' + Date.now(),
 };
 
 document.querySelectorAll('code').forEach(el => {
@@ -359,16 +385,26 @@ function renderPagination(pg) {
     : '';
 }
 
-async function showDetail(productId) {
+let currentDetailProductId = null;
+let currentSelections = [];
+
+async function showDetail(productId, selected) {
+  currentDetailProductId = productId;
   const panel = document.getElementById('detailPanel');
   panel.style.display = 'block';
   panel.innerHTML = '<div class="product-loading">Loading...</div>';
   panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
+  const reqBody = { id: productId };
+  if (selected && selected.length > 0) {
+    reqBody.selected = selected;
+    reqBody.preferences = selected.map(s => s.name);
+  }
+
   try {
     const res = await fetch(BASE + '/catalog/product', {
       method: 'POST', headers: UCP_HEADERS,
-      body: JSON.stringify({ id: productId }),
+      body: JSON.stringify(reqBody),
     });
     const data = await res.json();
     const p = data.product;
@@ -376,28 +412,64 @@ async function showDetail(productId) {
       panel.innerHTML = '<button class="detail-close" onclick="this.parentElement.style.display=\\'none\\'">&times;</button><p>Product not found</p>';
       return;
     }
+
+    // Track effective selections from response
+    currentSelections = p.selected || [];
+
     const variant = p.variants && p.variants[0];
     const price = variant && variant.price ? '$' + (variant.price.amount / 100).toFixed(2) : 'N/A';
     const avail = variant && variant.availability;
     const status = avail ? (avail.available ? 'In stock' : avail.status.replace(/_/g,' ')) : 'Unknown';
+    const statusClass = avail && avail.available ? 'stock' : 'oos';
     const desc = p.description && p.description.plain ? p.description.plain : '';
-    const cats = (p.categories || []).map(c => c.value).join(', ');
+
+    // Build option picker UI
+    let optionHtml = '';
+    if (p.options && p.options.length > 0) {
+      optionHtml = '<div class="option-picker">';
+      for (const opt of p.options) {
+        const selectedVal = currentSelections.find(s => s.name === opt.name);
+        optionHtml += '<div class="option-group"><span class="option-label">' + opt.name + '</span><div class="option-values">';
+        for (const val of opt.values) {
+          let cls = 'option-chip';
+          if (selectedVal && selectedVal.label === val.label) cls += ' selected';
+          if (val.exists === false) cls += ' no-exist';
+          else if (val.available === false) cls += ' unavailable';
+          const disabled = val.exists === false ? ' disabled' : '';
+          optionHtml += '<button class="' + cls + '"' + disabled + ' onclick="selectOption(\\'' + p.id + '\\', \\'' + opt.name + '\\', \\'' + val.label + '\\')">' + val.label + '</button>';
+        }
+        optionHtml += '</div></div>';
+      }
+      optionHtml += '</div>';
+    }
+
+    // Variant info
+    let variantHtml = '';
+    if (variant) {
+      variantHtml = '<div class="detail-variant-info">' +
+        '<span class="variant-title">' + (variant.title || variant.id) + '</span>' +
+        ' <span class="badge sm ' + statusClass + '">' + status + '</span>' +
+        '<div class="variant-id">variant: ' + variant.id + (variant.sku ? ' &middot; SKU: ' + variant.sku : '') + '</div>' +
+      '</div>';
+    }
 
     panel.innerHTML =
       '<button class="detail-close" onclick="this.parentElement.style.display=\\'none\\'">&times;</button>' +
-      '<h3>' + p.title + '</h3>' +
+      '<h3>' + p.title + ' <span style="color:var(--green);font-weight:700;font-size:1.1rem">' + price + '</span></h3>' +
       (desc ? '<div class="detail-desc">' + desc + '</div>' : '') +
-      '<div class="detail-meta">' +
-        '<div><span class="label">Price</span><span style="color:var(--green);font-weight:700">' + price + '</span></div>' +
-        '<div><span class="label">Status</span><span>' + status + '</span></div>' +
-        '<div><span class="label">ID</span><code>' + p.id + '</code></div>' +
-        (p.handle ? '<div><span class="label">Handle</span><code>' + p.handle + '</code></div>' : '') +
-        (cats ? '<div><span class="label">Categories</span><span>' + cats + '</span></div>' : '') +
-      '</div>' +
+      optionHtml +
+      variantHtml +
       '<details class="detail-json"><summary>Raw UCP response</summary><pre><code>' + JSON.stringify(data, null, 2) + '</code></pre></details>';
   } catch(e) {
     panel.innerHTML = '<button class="detail-close" onclick="this.parentElement.style.display=\\'none\\'">&times;</button><p>Error: ' + e.message + '</p>';
   }
+}
+
+function selectOption(productId, optName, optLabel) {
+  // Update selections: replace existing selection for this option name, or add new one
+  let newSelections = currentSelections.filter(s => s.name !== optName);
+  newSelections.push({ name: optName, label: optLabel });
+  showDetail(productId, newSelections);
 }
 
 // --- Try-it buttons ---
@@ -476,11 +548,19 @@ async function tryCartCheckout(btn) {
     const res = await fetch(BASE + '/checkout-sessions', {
       method: 'POST',
       headers: { ...UCP_HEADERS, 'idempotency-key': key },
-      body: JSON.stringify({ cart_id: lastCartId }),
+      body: JSON.stringify({ cart_id: lastCartId, line_items: [] }),
     });
     const data = await res.json();
     code.textContent = JSON.stringify(data, null, 2);
   } catch(e) { code.textContent = 'Error: ' + e.message; }
+}
+
+let selectedFulfillment = 'shipping';
+
+function setFulfillment(mode, btn) {
+  selectedFulfillment = mode;
+  btn.parentElement.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
 }
 
 async function tryCheckout(btn) {
@@ -489,15 +569,34 @@ async function tryCheckout(btn) {
   box.style.display = 'block';
   code.textContent = 'Loading...';
   const key = 'demo-' + Date.now() + '-' + Math.random().toString(36).slice(2,8);
+
+  const body = {
+    line_items: [{item: {id: 'bouquet_roses', title: 'Roses'}, quantity: 1}],
+    buyer: {full_name: 'Jane Doe', email: 'jane@example.com'},
+    payment: {instruments: []},
+  };
+
+  if (selectedFulfillment === 'pickup') {
+    body.fulfillment = {
+      methods: [{
+        type: 'pickup',
+        destinations: [{name: 'Downtown Flower Shop'}],
+      }],
+    };
+  } else {
+    body.fulfillment = {
+      methods: [{
+        type: 'shipping',
+        destinations: [{address_country: 'US', postal_code: '97201', address_region: 'OR', address_locality: 'Portland', street_address: '123 Main St'}],
+      }],
+    };
+  }
+
   try {
     const res = await fetch(BASE + '/checkout-sessions', {
       method: 'POST',
       headers: { ...UCP_HEADERS, 'idempotency-key': key },
-      body: JSON.stringify({
-        line_items: [{item: {id: 'bouquet_roses', title: 'Roses'}, quantity: 1}],
-        buyer: {full_name: 'Jane Doe', email: 'jane@example.com'},
-        payment: {instruments: []},
-      }),
+      body: JSON.stringify(body),
     });
     const data = await res.json();
     code.textContent = JSON.stringify(data, null, 2);

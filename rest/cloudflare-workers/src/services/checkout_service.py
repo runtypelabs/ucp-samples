@@ -30,6 +30,7 @@ from models import (
   DiscountsObject,
   Expectation,
   ExpectationLineItem,
+  FulfillmentAvailableMethod,
   FulfillmentGroupResponse,
   FulfillmentMethodResponse,
   FulfillmentResponse,
@@ -45,6 +46,7 @@ from models import (
   PostalAddress,
   ResponseCheckout,
   ResponseOrder,
+  RetailLocation,
   ShippingDestinationResponse,
   TotalResponse,
 )
@@ -146,16 +148,35 @@ class CheckoutService:
             )
 
         resp_destinations = []
-        if method_req.destinations:
+        if method_type == "pickup":
+          # For pickup, use retail locations
+          if method_req.destinations:
+            for dest_req in method_req.destinations:
+              if isinstance(dest_req, RetailLocation) or hasattr(dest_req, "name"):
+                resp_destinations.append(RetailLocation(
+                  id=dest_req.id or str(uuid.uuid4()),
+                  name=dest_req.name,
+                  address=getattr(dest_req, "address", None),
+                ))
+              else:
+                resp_destinations.append(RetailLocation(
+                  id=getattr(dest_req, "id", None) or str(uuid.uuid4()),
+                  name=getattr(dest_req, "name", "Store"),
+                ))
+          else:
+            # Provide default retail locations
+            for loc in self.fulfillment_service.get_retail_locations():
+              resp_destinations.append(loc)
+        elif method_req.destinations:
           for dest_req in method_req.destinations:
             resp_destinations.append(
               ShippingDestinationResponse(
                 id=dest_req.id or str(uuid.uuid4()),
-                address_country=dest_req.address_country,
-                postal_code=dest_req.postal_code,
-                address_region=dest_req.address_region,
-                address_locality=dest_req.address_locality,
-                street_address=dest_req.street_address,
+                address_country=getattr(dest_req, "address_country", None),
+                postal_code=getattr(dest_req, "postal_code", None),
+                address_region=getattr(dest_req, "address_region", None),
+                address_locality=getattr(dest_req, "address_locality", None),
+                street_address=getattr(dest_req, "street_address", None),
               )
             )
 
@@ -167,7 +188,14 @@ class CheckoutService:
           )
         )
 
-      fulfillment_resp = FulfillmentResponse(methods=resp_methods)
+      # Populate available_methods to signal both shipping and pickup are available
+      all_li_ids_list = [li.id for li in line_items]
+      available_methods = [
+        FulfillmentAvailableMethod(type="shipping", line_item_ids=all_li_ids_list, fulfillable_on="now"),
+        FulfillmentAvailableMethod(type="pickup", line_item_ids=all_li_ids_list, fulfillable_on="now",
+                                   description="Available for in-store pickup"),
+      ]
+      fulfillment_resp = FulfillmentResponse(methods=resp_methods, available_methods=available_methods)
 
     # Build discounts from request
     discounts_obj = None
@@ -279,7 +307,26 @@ class CheckoutService:
         method_li_ids = m_req.line_item_ids or [li.id for li in existing.line_items]
 
         resp_destinations = []
-        if method_type == "shipping":
+        if method_type == "pickup":
+          if m_req.destinations:
+            for dest_req in m_req.destinations:
+              if isinstance(dest_req, RetailLocation) or hasattr(dest_req, "name"):
+                resp_destinations.append(RetailLocation(
+                  id=getattr(dest_req, "id", None) or str(uuid.uuid4()),
+                  name=dest_req.name,
+                  address=getattr(dest_req, "address", None),
+                ))
+              else:
+                resp_destinations.append(RetailLocation(
+                  id=getattr(dest_req, "id", None) or str(uuid.uuid4()),
+                  name=getattr(dest_req, "name", "Store"),
+                ))
+          elif existing_method and existing_method.destinations:
+            resp_destinations = existing_method.destinations
+          else:
+            for loc in self.fulfillment_service.get_retail_locations():
+              resp_destinations.append(loc)
+        elif method_type == "shipping":
           if m_req.destinations:
             for dest_req in m_req.destinations:
               dest_data = dest_req.model_dump(exclude_none=True)
@@ -363,7 +410,7 @@ class CheckoutService:
     fulfillment_valid = False
     if checkout.fulfillment and checkout.fulfillment.methods:
       for method in checkout.fulfillment.methods:
-        if method.type == "shipping" and not method.selected_destination_id:
+        if not method.selected_destination_id:
           continue
         if method.groups:
           for group in method.groups:
@@ -374,7 +421,7 @@ class CheckoutService:
           break
 
     if not fulfillment_valid:
-      raise InvalidRequestError("Fulfillment address and option must be selected before completion.")
+      raise InvalidRequestError("Fulfillment destination and option must be selected before completion.")
 
     # Reserve inventory
     for line in checkout.line_items:
@@ -396,16 +443,27 @@ class CheckoutService:
     if checkout.fulfillment and checkout.fulfillment.methods:
       for method in checkout.fulfillment.methods:
         selected_dest = None
+        dest_description = None
         if method.selected_destination_id and method.destinations:
           for dest in method.destinations:
             if dest.id == method.selected_destination_id:
-              selected_dest = PostalAddress(
-                street_address=dest.street_address,
-                address_locality=dest.address_locality,
-                address_region=dest.address_region,
-                postal_code=dest.postal_code,
-                address_country=dest.address_country,
-              )
+              if method.type == "pickup" and isinstance(dest, RetailLocation):
+                dest_description = f"Pickup at {dest.name}"
+                if dest.address:
+                  selected_dest = dest.address
+              elif hasattr(dest, "name") and not hasattr(dest, "street_address"):
+                # RetailLocation loaded from JSON
+                dest_description = f"Pickup at {dest.name}"
+                if hasattr(dest, "address") and dest.address:
+                  selected_dest = PostalAddress(**dest.address) if isinstance(dest.address, dict) else dest.address
+              else:
+                selected_dest = PostalAddress(
+                  street_address=getattr(dest, "street_address", None),
+                  address_locality=getattr(dest, "address_locality", None),
+                  address_region=getattr(dest, "address_region", None),
+                  postal_code=getattr(dest, "postal_code", None),
+                  address_country=getattr(dest, "address_country", None),
+                )
               break
 
         if method.groups:
@@ -420,13 +478,14 @@ class CheckoutService:
                   if group.line_item_ids and li.id in group.line_item_ids:
                     exp_line_items.append(ExpectationLineItem(id=li.id, quantity=li.quantity))
 
+                exp_description = dest_description or selected_opt.title
                 expectations.append(
                   Expectation(
                     id=f"exp_{uuid.uuid4()}",
                     line_items=exp_line_items,
                     method_type=method.type,
                     destination=selected_dest,
-                    description=selected_opt.title,
+                    description=exp_description,
                   )
                 )
 
@@ -614,7 +673,12 @@ class CheckoutService:
 
       for method in checkout.fulfillment.methods:
         calculated_options = []
-        if method.type == "shipping" and method.selected_destination_id:
+
+        if method.type == "pickup" and method.selected_destination_id:
+          # Pickup is free - calculate pickup options
+          calculated_options = self.fulfillment_service.calculate_pickup_options()
+
+        elif method.type == "shipping" and method.selected_destination_id:
           selected_dest = None
           if method.destinations:
             for dest in method.destinations:
@@ -624,11 +688,11 @@ class CheckoutService:
 
           if selected_dest:
             address_obj = PostalAddress(
-              street_address=selected_dest.street_address,
-              address_locality=selected_dest.address_locality,
-              address_region=selected_dest.address_region,
-              postal_code=selected_dest.postal_code,
-              address_country=selected_dest.address_country,
+              street_address=getattr(selected_dest, "street_address", None),
+              address_locality=getattr(selected_dest, "address_locality", None),
+              address_region=getattr(selected_dest, "address_region", None),
+              postal_code=getattr(selected_dest, "postal_code", None),
+              address_country=getattr(selected_dest, "address_country", None),
             )
 
             all_li_ids = [li.id for li in checkout.line_items]
@@ -666,7 +730,8 @@ class CheckoutService:
               if selected_opt:
                 opt_total = next((t.amount for t in selected_opt.totals if t.type == "total"), 0)
                 grand_total += opt_total
-                checkout.totals.append(TotalResponse(type="fulfillment", display_text="Shipping", amount=opt_total))
+                display = "In-store pickup" if method.type == "pickup" else "Shipping"
+                checkout.totals.append(TotalResponse(type="fulfillment", display_text=display, amount=opt_total))
 
     # Discounts
     # F3: Reset applied list on every recalculation to prevent re-accumulation

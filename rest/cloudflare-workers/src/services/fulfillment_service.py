@@ -2,7 +2,15 @@
 
 import json
 import db
-from models import FulfillmentOptionResponse, TotalResponse
+from models import FulfillmentOptionResponse, RetailLocation, TotalResponse
+
+
+# Demo retail locations for pickup
+RETAIL_LOCATIONS = [
+  RetailLocation(id="store_downtown", name="Downtown Flower Shop", address=None),
+  RetailLocation(id="store_midtown", name="Midtown Garden Center", address=None),
+  RetailLocation(id="store_uptown", name="Uptown Floral Studio", address=None),
+]
 
 
 class FulfillmentService:
@@ -62,3 +70,20 @@ class FulfillmentService:
       )
 
     return options
+
+  def calculate_pickup_options(self):
+    """Calculate pickup fulfillment options (free in-store pickup)."""
+    return [
+      FulfillmentOptionResponse(
+        id="pickup_standard",
+        title="In-store pickup",
+        totals=[
+          TotalResponse(type="subtotal", amount=0),
+          TotalResponse(type="total", amount=0),
+        ],
+      )
+    ]
+
+  def get_retail_locations(self):
+    """Return available retail locations for pickup."""
+    return RETAIL_LOCATIONS

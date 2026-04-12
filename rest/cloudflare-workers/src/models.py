@@ -114,6 +114,12 @@ class ShippingDestinationResponse(BaseModel):
   street_address: str | None = None
 
 
+class RetailLocation(BaseModel):
+  id: str | None = None
+  name: str
+  address: PostalAddress | None = None
+
+
 class FulfillmentOptionResponse(BaseModel):
   id: str
   title: str
@@ -132,7 +138,7 @@ class FulfillmentMethodRequest(BaseModel):
   type: str = "shipping"
   line_item_ids: list[str] | None = None
   groups: list[FulfillmentGroupResponse] | None = None
-  destinations: list[ShippingDestinationRequest] | None = None
+  destinations: list[ShippingDestinationRequest | RetailLocation] | None = None
   selected_destination_id: str | None = None
 
 
@@ -141,7 +147,7 @@ class FulfillmentMethodResponse(BaseModel):
   type: str = "shipping"
   line_item_ids: list[str] | None = None
   groups: list[FulfillmentGroupResponse] | None = None
-  destinations: list[ShippingDestinationResponse] | None = None
+  destinations: list[ShippingDestinationResponse | RetailLocation] | None = None
   selected_destination_id: str | None = None
 
 
@@ -149,9 +155,16 @@ class FulfillmentRequest(BaseModel):
   methods: list[FulfillmentMethodRequest] | None = None
 
 
+class FulfillmentAvailableMethod(BaseModel):
+  type: str
+  line_item_ids: list[str]
+  fulfillable_on: str | None = None
+  description: str | None = None
+
+
 class FulfillmentResponse(BaseModel):
   methods: list[FulfillmentMethodResponse] | None = None
-  available_methods: list[str] | None = None
+  available_methods: list[FulfillmentAvailableMethod] | None = None
 
 
 # --- Discount ---
@@ -238,7 +251,7 @@ class Order(BaseModel):
 
 class CheckoutCreateRequest(BaseModel):
   cart_id: str | None = None
-  line_items: list[LineItemRequest] = []
+  line_items: list[LineItemRequest]
   buyer: Buyer | None = None
   context: Any | None = None
   payment: PaymentResponse | None = None
@@ -304,6 +317,34 @@ class Checkout(BaseModel):
 
 # --- Catalog (2026-04-08) ---
 
+class SelectedOption(BaseModel):
+  name: str
+  label: str
+  id: str | None = None
+
+
+class OptionValue(BaseModel):
+  id: str | None = None
+  label: str
+
+
+class DetailOptionValue(BaseModel):
+  id: str | None = None
+  label: str
+  available: bool | None = None
+  exists: bool | None = None
+
+
+class ProductOption(BaseModel):
+  name: str
+  values: list[OptionValue]
+
+
+class DetailProductOption(BaseModel):
+  name: str
+  values: list[DetailOptionValue]
+
+
 class CatalogPrice(BaseModel):
   amount: int = 0
   currency: str = "USD"
@@ -342,7 +383,7 @@ class CatalogVariant(BaseModel):
   description: CatalogDescription | None = None
   price: CatalogPrice | None = None
   availability: CatalogAvailability | None = None
-  options: list[Any] = []
+  options: list[SelectedOption] = []
   media: list[CatalogMedia] = []
 
 
@@ -440,15 +481,21 @@ class CatalogLookupResponse(BaseModel):
 
 class CatalogProductRequest(BaseModel):
   id: str
-  selected: list[Any] | None = None
+  selected: list[SelectedOption] | None = None
   preferences: list[str] | None = None
   context: CatalogContext | None = None
   signals: dict[str, Any] | None = None
 
 
+class CatalogDetailProduct(CatalogProduct):
+  """Product in a get_product response with effective selections and availability signals."""
+  selected: list[SelectedOption] | None = None
+  options: list[DetailProductOption] | None = None
+
+
 class CatalogProductResponse(BaseModel):
   ucp: CatalogUcp
-  product: CatalogProduct | None = None
+  product: CatalogDetailProduct | None = None
   messages: list[CatalogMessage] = []
 
 
