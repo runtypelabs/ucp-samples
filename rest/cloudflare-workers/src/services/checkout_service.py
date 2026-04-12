@@ -19,13 +19,14 @@ from exceptions import (
   ResourceNotFoundError,
 )
 from models import (
-  Ap2CompleteRequest,
   Allocation,
   Cart,
   AppliedDiscount,
   Checkout,
+  CheckoutCompleteRequest,
   CheckoutCreateRequest,
   CheckoutUpdateRequest,
+  CheckoutLink,
   DiscountsObject,
   Expectation,
   ExpectationLineItem,
@@ -39,11 +40,9 @@ from models import (
   OrderFulfillment,
   OrderLineItem,
   OrderQuantity,
-  PaymentCreateRequest,
   PaymentResponse,
   PlatformConfig,
   PostalAddress,
-  ResponseCapability,
   ResponseCheckout,
   ResponseOrder,
   ShippingDestinationResponse,
@@ -53,7 +52,7 @@ from services.fulfillment_service import FulfillmentService
 
 logger = logging.getLogger(__name__)
 
-SERVER_VERSION = "v2026-04-08"
+SERVER_VERSION = "2026-04-08"
 
 
 class CheckoutService:
@@ -61,6 +60,16 @@ class CheckoutService:
     self.fulfillment_service = fulfillment_service
     self.db = d1_db
     self.base_url = base_url.rstrip("/")
+
+  def _build_ucp_metadata(self):
+    return ResponseCheckout(
+      version=SERVER_VERSION,
+      capabilities={"dev.ucp.shopping.checkout": [{"version": SERVER_VERSION}]},
+      payment_handlers={
+        "dev.shopify.shop_pay": [{"id": "shop_pay", "version": SERVER_VERSION}],
+        "com.google.pay": [{"id": "google_pay", "version": SERVER_VERSION}],
+      },
+    )
 
   def _compute_hash(self, data):
     if hasattr(data, "model_dump"):
@@ -80,9 +89,15 @@ class CheckoutService:
         raise IdempotencyConflictError("Idempotency key reused with different parameters")
       return Checkout(**existing_record.response_body)
 
-    checkout_id = checkout_req.id or str(uuid.uuid4())
+    checkout_id = str(uuid.uuid4())
+
+    # CK5: Server determines currency (from context/geo-IP); default to USD
+    currency = "USD"
 
     # Cart-to-checkout conversion: use cart contents when cart_id is provided
+    # Spec: "Business MUST use cart contents (line_items, context, buyer)"
+    # and MUST ignore overlapping checkout fields unconditionally.
+    cart_context = checkout_req.context
     if checkout_req.cart_id:
       cart_data = await db.get_cart(self.db, checkout_req.cart_id)
       if not cart_data:
@@ -90,12 +105,11 @@ class CheckoutService:
       cart = Cart(**cart_data)
       if cart.status == "canceled":
         raise InvalidRequestError(f"Cart {checkout_req.cart_id} is canceled")
-      # Use cart's line_items, buyer, and currency (ignore overlapping checkout fields per spec)
+      # MUST use cart contents unconditionally (ignore overlapping checkout fields)
       line_items = cart.line_items
-      if cart.buyer:
-        checkout_req.buyer = cart.buyer
-      if cart.currency:
-        checkout_req.currency = cart.currency
+      checkout_req.buyer = cart.buyer
+      currency = cart.currency
+      cart_context = cart.context
     else:
       line_items = []
       for li_req in checkout_req.line_items:
@@ -161,24 +175,22 @@ class CheckoutService:
       discounts_obj = DiscountsObject(codes=checkout_req.discounts.codes)
 
     checkout = Checkout(
-      ucp=ResponseCheckout(
-        version=SERVER_VERSION,
-        capabilities=[
-          ResponseCapability(name="dev.ucp.shopping.checkout", version=SERVER_VERSION)
-        ],
-      ),
+      ucp=self._build_ucp_metadata(),
       id=checkout_id,
-      status=CheckoutStatus.IN_PROGRESS,
-      currency=checkout_req.currency,
+      status=CheckoutStatus.INCOMPLETE,
+      currency=currency,
       line_items=line_items,
       totals=[],
-      links=[],
+      links=[
+        CheckoutLink(rel="privacy_policy", href=f"{self.base_url}/policies/privacy", title="Privacy Policy"),
+        CheckoutLink(rel="terms_of_service", href=f"{self.base_url}/policies/terms", title="Terms of Service"),
+        CheckoutLink(rel="refund_policy", href=f"{self.base_url}/policies/refunds", title="Refund Policy"),
+      ],
       payment=PaymentResponse(
-        handlers=[],
-        selected_instrument_id=checkout_req.payment.selected_instrument_id if checkout_req.payment else None,
-        instruments=[],
+        instruments=checkout_req.payment.instruments if checkout_req.payment else [],
       ),
       buyer=checkout_req.buyer,
+      context=cart_context,
       platform=platform_config,
       fulfillment=fulfillment_resp,
       discounts=discounts_obj,
@@ -187,6 +199,7 @@ class CheckoutService:
     await self._recalculate_totals(checkout)
     await self._validate_inventory(checkout)
 
+    # CK6: Only advance to ready_for_complete after successful validation
     checkout.status = CheckoutStatus.READY_FOR_COMPLETE
 
     response_body = checkout.model_dump(mode="json")
@@ -233,14 +246,9 @@ class CheckoutService:
         )
       existing.line_items = line_items
 
-    if checkout_req.currency:
-      existing.currency = checkout_req.currency
-
     if checkout_req.payment:
       existing.payment = PaymentResponse(
-        handlers=existing.payment.handlers if existing.payment else [],
-        selected_instrument_id=checkout_req.payment.selected_instrument_id,
-        instruments=[],
+        instruments=checkout_req.payment.instruments,
       )
 
     if checkout_req.buyer:
@@ -330,15 +338,10 @@ class CheckoutService:
 
     return existing
 
-  async def complete_checkout(self, checkout_id, payment, risk_signals, idempotency_key, ap2=None):
+  async def complete_checkout(self, checkout_id, complete_req: CheckoutCompleteRequest, idempotency_key):
     logger.info("Completing checkout session %s", checkout_id)
 
-    combined_data = {
-      "payment": payment.model_dump(mode="json"),
-      "risk_signals": risk_signals,
-      "ap2": ap2.model_dump(mode="json") if ap2 else None,
-    }
-    request_hash = self._compute_hash(combined_data)
+    request_hash = self._compute_hash(complete_req)
 
     existing_record = await db.get_idempotency_record(self.db, idempotency_key)
     if existing_record:
@@ -348,13 +351,13 @@ class CheckoutService:
 
     await db.log_request(
       self.db, method="POST", url=f"/checkout-sessions/{checkout_id}/complete",
-      checkout_id=checkout_id, payload=combined_data,
+      checkout_id=checkout_id, payload=complete_req.model_dump(mode="json"),
     )
 
     checkout = await self._get_and_validate_checkout(checkout_id)
     self._ensure_modifiable(checkout, "complete")
 
-    await self._process_payment(payment)
+    await self._process_payment(complete_req.payment)
 
     # Validate fulfillment
     fulfillment_valid = False
@@ -438,10 +441,14 @@ class CheckoutService:
       )
 
     order = Order(
-      ucp=ResponseOrder(**checkout.ucp.model_dump()),
+      ucp=ResponseOrder(
+        version=checkout.ucp.version,
+        capabilities={"dev.ucp.shopping.order": [{"version": SERVER_VERSION}]},
+      ),
       id=order_id, checkout_id=checkout.id,
       permalink_url=order_permalink_url,
       line_items=order_line_items,
+      currency=checkout.currency,
       totals=[TotalResponse(**t.model_dump()) for t in checkout.totals],
       fulfillment=OrderFulfillment(expectations=expectations, events=[]),
     )
@@ -463,11 +470,32 @@ class CheckoutService:
     if checkout.order and checkout.order.id:
       order_data = await db.get_order(self.db, checkout.order.id)
 
-    payload = {"event_type": event_type, "checkout_id": checkout.id, "order": order_data}
+    if not order_data:
+      return
+
+    # O1: Send bare order entity as payload (no envelope)
+    body_bytes = json.dumps(order_data, separators=(",", ":")).encode("utf-8")
+
+    # O2: Required webhook headers per spec
+    import hashlib as _hashlib
+    import base64 as _base64
+    import time as _time
+
+    content_digest = _base64.b64encode(
+      _hashlib.sha256(body_bytes).digest()
+    ).decode("ascii")
+
+    webhook_headers = {
+      "Content-Type": "application/json",
+      "UCP-Agent": f'profile="{self.base_url}/.well-known/ucp"',
+      "Webhook-Id": str(uuid.uuid4()),
+      "Webhook-Timestamp": str(int(_time.time())),
+      "Content-Digest": f"sha-256=:{content_digest}:",
+    }
 
     try:
       async with httpx.AsyncClient() as client:
-        await client.post(webhook_url, json=payload, timeout=5.0)
+        await client.post(webhook_url, content=body_bytes, headers=webhook_headers, timeout=5.0)
     except Exception as e:
       logger.error("Failed to notify webhook at %s: %s", webhook_url, e)
 
@@ -481,10 +509,17 @@ class CheckoutService:
     if "events" not in order_data["fulfillment"] or order_data["fulfillment"]["events"] is None:
       order_data["fulfillment"]["events"] = []
 
+    # Collect all line items for the shipped event
+    event_line_items = [
+      {"id": li["id"], "quantity": li["quantity"]["total"]}
+      for li in order_data.get("line_items", [])
+    ]
+
     order_data["fulfillment"]["events"].append({
       "id": f"evt_{uuid.uuid4()}",
       "type": "shipped",
-      "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+      "occurred_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+      "line_items": event_line_items,
     })
 
     await db.save_order(self.db, order_id, order_data)
@@ -563,12 +598,15 @@ class CheckoutService:
 
       base_amount = product.price * line.quantity
       line.totals = [
-        TotalResponse(type="subtotal", amount=base_amount),
-        TotalResponse(type="total", amount=base_amount),
+        TotalResponse(type="subtotal", display_text="Subtotal", amount=base_amount),
+        TotalResponse(type="total", display_text="Total", amount=base_amount),
       ]
       grand_total += base_amount
 
-    checkout.totals = [TotalResponse(type="subtotal", amount=grand_total)]
+    checkout.totals = [TotalResponse(type="subtotal", display_text="Subtotal", amount=grand_total)]
+
+    # F2: Capture subtotal before fulfillment costs for percentage discount base
+    line_item_subtotal = grand_total
 
     # Fulfillment
     if checkout.fulfillment and checkout.fulfillment.methods:
@@ -628,11 +666,13 @@ class CheckoutService:
               if selected_opt:
                 opt_total = next((t.amount for t in selected_opt.totals if t.type == "total"), 0)
                 grand_total += opt_total
-                checkout.totals.append(TotalResponse(type="fulfillment", amount=opt_total))
+                checkout.totals.append(TotalResponse(type="fulfillment", display_text="Shipping", amount=opt_total))
 
     # Discounts
+    # F3: Reset applied list on every recalculation to prevent re-accumulation
     if not checkout.discounts:
       checkout.discounts = DiscountsObject()
+    checkout.discounts.applied = []
 
     if checkout.discounts.codes:
       discounts = await db.get_discounts_by_codes(self.db, checkout.discounts.codes)
@@ -643,40 +683,36 @@ class CheckoutService:
         if discount_obj:
           discount_amount = 0
           if discount_obj.type == "percentage":
-            discount_amount = int(grand_total * (discount_obj.value / 100))
+            # F2: Use line_item_subtotal (excludes fulfillment costs)
+            discount_amount = int(line_item_subtotal * (discount_obj.value / 100))
           elif discount_obj.type == "fixed_amount":
             discount_amount = discount_obj.value
 
           if discount_amount > 0:
             grand_total -= discount_amount
-            if checkout.discounts.applied is None:
-              checkout.discounts.applied = []
+            # CK3/F1: Discount amounts must be negative per spec (exclusiveMaximum: 0)
             checkout.discounts.applied.append(
               AppliedDiscount(
                 code=code,
                 title=discount_obj.description,
-                amount=discount_amount,
+                amount=-discount_amount,
                 allocations=[
-                  Allocation(path="$.totals[?(@.type=='subtotal')]", amount=discount_amount)
+                  Allocation(path="$.totals[?(@.type=='subtotal')]", amount=-discount_amount)
                 ],
               )
             )
-            checkout.totals.append(TotalResponse(type="discount", amount=discount_amount))
+            checkout.totals.append(TotalResponse(type="discount", display_text=discount_obj.description or "Discount", amount=-discount_amount))
 
-    checkout.totals.append(TotalResponse(type="total", amount=grand_total))
+    checkout.totals.append(TotalResponse(type="total", display_text="Total", amount=grand_total))
 
-  async def _process_payment(self, payment):
+  async def _process_payment(self, payment: PaymentResponse):
     instruments = payment.instruments
     if not instruments:
       raise InvalidRequestError("Missing payment instruments")
 
-    selected_id = payment.selected_instrument_id
-    if not selected_id:
-      raise InvalidRequestError("Missing selected_instrument_id")
-
-    selected_instrument = next((i for i in instruments if i.id == selected_id), None)
+    selected_instrument = next((i for i in instruments if i.selected), None)
     if not selected_instrument:
-      raise InvalidRequestError(f"Selected instrument {selected_id} not found")
+      raise InvalidRequestError("No instrument marked as selected")
 
     handler_id = selected_instrument.handler_id
     credential = selected_instrument.credential

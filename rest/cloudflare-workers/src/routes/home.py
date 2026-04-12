@@ -164,8 +164,7 @@ HOME_HTML = """<!DOCTYPE html>
     {"item": {"id": "bouquet_roses", "title": "Roses"}, "quantity": 1}
   ],
   "buyer": {"full_name": "Jane Doe", "email": "jane@example.com"},
-  "currency": "USD",
-  "payment": {"instruments": [], "handlers": []}
+  "payment": {"instruments": []}
 }'</span></code></pre>
           <button class="try-btn" onclick="tryCheckout(this)">Try it</button>
           <div class="response-box"><pre><code></code></pre></div>
@@ -188,8 +187,7 @@ HOME_HTML = """<!DOCTYPE html>
   "line_items": [
     {"item": {"id": "bouquet_roses"}, "quantity": 2},
     {"item": {"id": "pot_ceramic"}, "quantity": 1}
-  ],
-  "currency": "USD"
+  ]
 }'</span></code></pre>
           <button class="try-btn" onclick="tryCart(this)">Try it</button>
           <div class="response-box"><pre><code></code></pre></div>
@@ -271,7 +269,7 @@ HOME_HTML = """<!DOCTYPE html>
   </p>
 
   <footer>
-    Shipped with <svg style="display:inline-block;vertical-align:middle;margin:0 0.15rem" width="16" height="16" viewBox="0 0 24 24" fill="#ef4444" xmlns="http://www.w3.org/2000/svg"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg> by <a href="https://runtype.com" target="_blank" rel="noopener"><img src="https://www.runtype.com/runtype-text-only.svg" alt="Runtype" style="display:inline-block;vertical-align:middle;height:1em;filter:invert(1);margin-left:0.2rem" /></a>
+    Shipped with <svg style="display:inline-block;vertical-align:middle;margin:0 0.15rem" width="16" height="16" viewBox="0 0 24 24" fill="#ef4444" xmlns="http://www.w3.org/2000/svg"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg> by <a href="https://runtype.com" target="_blank" rel="noopener"><img src="https://www.runtype.com/runtype-text-only.svg" alt="Runtype" style="display:inline-block;vertical-align:middle;height:1em;filter:invert(1);margin-left:0.2rem;margin-top: 2px" /></a>
   </footer>
 </div>
 
@@ -445,7 +443,6 @@ async function tryCart(btn) {
           {item: {id: 'bouquet_roses'}, quantity: 2},
           {item: {id: 'pot_ceramic'}, quantity: 1},
         ],
-        currency: 'USD',
       }),
     });
     const data = await res.json();
@@ -499,8 +496,7 @@ async function tryCheckout(btn) {
       body: JSON.stringify({
         line_items: [{item: {id: 'bouquet_roses', title: 'Roses'}, quantity: 1}],
         buyer: {full_name: 'Jane Doe', email: 'jane@example.com'},
-        currency: 'USD',
-        payment: {instruments: [], handlers: []},
+        payment: {instruments: []},
       }),
     });
     const data = await res.json();

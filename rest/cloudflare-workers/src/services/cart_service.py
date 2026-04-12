@@ -19,14 +19,13 @@ from models import (
   CartUpdateRequest,
   ItemResponse,
   LineItemResponse,
-  ResponseCapability,
   ResponseCart,
   TotalResponse,
 )
 
 logger = logging.getLogger(__name__)
 
-SERVER_VERSION = "v2026-04-08"
+SERVER_VERSION = "2026-04-08"
 
 
 class CartService:
@@ -44,9 +43,7 @@ class CartService:
   def _build_ucp_metadata(self):
     return ResponseCart(
       version=SERVER_VERSION,
-      capabilities=[
-        ResponseCapability(name="dev.ucp.shopping.cart", version=SERVER_VERSION),
-      ],
+      capabilities={"dev.ucp.shopping.cart": [{"version": SERVER_VERSION}]},
     )
 
   async def create_cart(self, cart_req: CartCreateRequest, idempotency_key: str):
@@ -77,11 +74,11 @@ class CartService:
       ucp=self._build_ucp_metadata(),
       id=cart_id,
       status="active",
-      currency=cart_req.currency,
+      currency="USD",
       line_items=line_items,
       totals=[],
-      links=[],
       buyer=cart_req.buyer,
+      context=cart_req.context,
     )
 
     await self._recalculate_totals(cart)
@@ -128,11 +125,11 @@ class CartService:
         )
       existing.line_items = line_items
 
-    if cart_req.currency:
-      existing.currency = cart_req.currency
-
     if cart_req.buyer:
       existing.buyer = cart_req.buyer
+
+    if cart_req.context is not None:
+      existing.context = cart_req.context
 
     existing.ucp = self._build_ucp_metadata()
 

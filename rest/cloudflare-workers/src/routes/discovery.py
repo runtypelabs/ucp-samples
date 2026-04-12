@@ -15,95 +15,81 @@ def _get_shop_id():
 
 DISCOVERY_PROFILE_TEMPLATE = {
   "ucp": {
-    "version": "v2026-04-08",
+    "version": "2026-04-08",
     "services": {
-      "dev.ucp.shopping": {
-        "version": "v2026-04-08",
+      "dev.ucp.shopping": [{
+        "version": "2026-04-08",
+        "transport": "rest",
         "spec": "https://ucp.dev/specification/reference",
-        "rest": {
-          "schema": "https://ucp.dev/services/shopping/rest.openapi.json",
-          "endpoint": "{{ENDPOINT}}"
-        }
-      }
+        "schema": "https://ucp.dev/services/shopping/rest.openapi.json",
+        "endpoint": "{{ENDPOINT}}"
+      }]
     },
-    "capabilities": [
-      {
-        "name": "dev.ucp.shopping.checkout",
-        "version": "v2026-04-08",
+    "capabilities": {
+      "dev.ucp.shopping.checkout": [{
+        "version": "2026-04-08",
         "spec": "https://ucp.dev/specification/checkout",
         "schema": "https://ucp.dev/schemas/shopping/checkout.json"
-      },
-      {
-        "name": "dev.ucp.shopping.order",
-        "version": "v2026-04-08",
+      }],
+      "dev.ucp.shopping.order": [{
+        "version": "2026-04-08",
         "spec": "https://ucp.dev/specification/order",
         "schema": "https://ucp.dev/schemas/shopping/order.json"
-      },
-      {
-        "name": "dev.ucp.shopping.discount",
-        "version": "v2026-04-08",
+      }],
+      "dev.ucp.shopping.discount": [{
+        "version": "2026-04-08",
         "spec": "https://ucp.dev/specification/discount",
         "schema": "https://ucp.dev/schemas/shopping/discount.json",
         "extends": "dev.ucp.shopping.checkout"
-      },
-      {
-        "name": "dev.ucp.shopping.fulfillment",
-        "version": "v2026-04-08",
+      }],
+      "dev.ucp.shopping.fulfillment": [{
+        "version": "2026-04-08",
         "spec": "https://ucp.dev/specification/fulfillment",
         "schema": "https://ucp.dev/schemas/shopping/fulfillment.json",
         "extends": "dev.ucp.shopping.checkout"
-      },
-      {
-        "name": "dev.ucp.shopping.buyer_consent",
-        "version": "v2026-04-08",
+      }],
+      "dev.ucp.shopping.buyer_consent": [{
+        "version": "2026-04-08",
         "spec": "https://ucp.dev/specification/buyer-consent",
         "schema": "https://ucp.dev/schemas/shopping/buyer_consent.json",
         "extends": "dev.ucp.shopping.checkout"
-      },
-      {
-        "name": "dev.ucp.shopping.cart",
-        "version": "v2026-04-08",
+      }],
+      "dev.ucp.shopping.cart": [{
+        "version": "2026-04-08",
         "spec": "https://ucp.dev/specification/cart",
         "schema": "https://ucp.dev/schemas/shopping/cart.json"
-      },
-      {
-        "name": "dev.ucp.shopping.catalog.search",
-        "version": "v2026-04-08",
+      }],
+      "dev.ucp.shopping.catalog.search": [{
+        "version": "2026-04-08",
         "spec": "https://ucp.dev/v2026-04-08/specification/catalog/search",
         "schema": "https://ucp.dev/v2026-04-08/schemas/shopping/catalog_search.json"
-      },
-      {
-        "name": "dev.ucp.shopping.catalog.lookup",
-        "version": "v2026-04-08",
+      }],
+      "dev.ucp.shopping.catalog.lookup": [{
+        "version": "2026-04-08",
         "spec": "https://ucp.dev/v2026-04-08/specification/catalog/lookup",
         "schema": "https://ucp.dev/v2026-04-08/schemas/shopping/catalog_lookup.json"
-      }
-    ]
-  },
-  "payment": {
-    "handlers": [
-      {
+      }],
+      "dev.ucp.shopping.catalog.product": [{
+        "version": "2026-04-08",
+        "spec": "https://ucp.dev/v2026-04-08/specification/catalog/product",
+        "schema": "https://ucp.dev/v2026-04-08/schemas/shopping/catalog_product.json"
+      }]
+    },
+    "payment_handlers": {
+      "dev.shopify.shop_pay": [{
         "id": "shop_pay",
-        "name": "dev.shopify.shop_pay",
-        "version": "v2026-04-08",
+        "version": "2026-04-08",
         "spec": "https://shopify.dev/docs/agents/checkout/shop-pay-handler",
-        "config_schema": "https://shopify.dev/ucp/shop-pay-handler/2026-01-11/config.json",
-        "instrument_schemas": [
-          "https://shopify.dev/ucp/shop-pay-handler/2026-01-11/instrument.json"
-        ],
+        "schema": "https://shopify.dev/ucp/shop-pay-handler/2026-01-11/config.json",
         "config": {
           "shop_id": "{{SHOP_ID}}"
         }
-      },
-      {
+      }],
+      "com.google.pay": [{
         "id": "google_pay",
-        "name": "com.google.pay",
-        "version": "v2026-04-08",
+        "version": "2026-04-08",
         "spec": "https://pay.google.com/gp/p/ucp/2026-01-11/",
-        "config_schema": "https://pay.google.com/gp/p/ucp/2026-01-11/schemas/config.json",
-        "instrument_schemas": [
-          "https://pay.google.com/gp/p/ucp/2026-01-11/schemas/card_payment_instrument.json"
-        ],
+        "schema": "https://pay.google.com/gp/p/ucp/2026-01-11/schemas/config.json",
         "config": {
           "api_version": 2,
           "api_version_minor": 0,
@@ -133,8 +119,8 @@ DISCOVERY_PROFILE_TEMPLATE = {
             }
           ]
         }
-      }
-    ]
+      }]
+    }
   }
 }
 

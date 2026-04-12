@@ -1,4 +1,4 @@
-"""Catalog routes for the UCP server (v2026-04-08)."""
+"""Catalog routes for the UCP server (2026-04-08)."""
 
 import json
 import logging
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-VERSION = "v2026-04-08"
+VERSION = "2026-04-08"
 
 
 def _make_ucp(capability):
@@ -71,6 +71,7 @@ def _row_to_product(row, base_url=""):
   variant = CatalogVariant(
     id=row.id,
     title=row.title,
+    description=CatalogDescription(plain=desc_text) if desc_text else CatalogDescription(plain=row.title),
     price=price,
     availability=avail,
     media=media,
@@ -139,8 +140,12 @@ async def catalog_search(
   request: Request,
   body: CatalogSearchRequest = Body(...),
   ucp_agent: str = Header(...),
-  request_signature: str = Header(...),
+  signature: str = Header(..., alias="Signature"),
   request_id: str = Header(...),
+  signature_input: str | None = Header(None, alias="Signature-Input"),
+  content_digest: str | None = Header(None, alias="Content-Digest"),
+  authorization: str | None = Header(None, alias="Authorization"),
+  x_api_key: str | None = Header(None, alias="X-API-Key"),
 ):
   d1 = request.app.state.db
   base_url = str(request.base_url).rstrip("/")
@@ -186,8 +191,12 @@ async def catalog_lookup(
   request: Request,
   body: CatalogLookupRequest = Body(...),
   ucp_agent: str = Header(...),
-  request_signature: str = Header(...),
+  signature: str = Header(..., alias="Signature"),
   request_id: str = Header(...),
+  signature_input: str | None = Header(None, alias="Signature-Input"),
+  content_digest: str | None = Header(None, alias="Content-Digest"),
+  authorization: str | None = Header(None, alias="Authorization"),
+  x_api_key: str | None = Header(None, alias="X-API-Key"),
 ):
   d1 = request.app.state.db
 
@@ -231,8 +240,12 @@ async def catalog_product(
   request: Request,
   body: CatalogProductRequest = Body(...),
   ucp_agent: str = Header(...),
-  request_signature: str = Header(...),
+  signature: str = Header(..., alias="Signature"),
   request_id: str = Header(...),
+  signature_input: str | None = Header(None, alias="Signature-Input"),
+  content_digest: str | None = Header(None, alias="Content-Digest"),
+  authorization: str | None = Header(None, alias="Authorization"),
+  x_api_key: str | None = Header(None, alias="X-API-Key"),
 ):
   d1 = request.app.state.db
   base_url = str(request.base_url).rstrip("/")
@@ -242,7 +255,7 @@ async def catalog_product(
     return CatalogProductResponse(
       ucp=CatalogUcp(
         version=VERSION,
-        capabilities={"dev.ucp.shopping.catalog.lookup": [{"version": VERSION}]},
+        capabilities={"dev.ucp.shopping.catalog.product": [{"version": VERSION}]},
         status="error",
       ),
       product=None,
@@ -255,6 +268,6 @@ async def catalog_product(
   product = _row_to_product(row, base_url)
 
   return CatalogProductResponse(
-    ucp=_make_ucp("dev.ucp.shopping.catalog.lookup"),
+    ucp=_make_ucp("dev.ucp.shopping.catalog.product"),
     product=product,
   ).model_dump(mode="json")

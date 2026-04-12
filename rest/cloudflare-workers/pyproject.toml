@@ -12,6 +12,8 @@ dependencies = [
 dev = [
     "workers-py",
     "workers-runtime-sdk",
+    "pytest",
+    "pytest-asyncio",
 ]
 
 [build-system]

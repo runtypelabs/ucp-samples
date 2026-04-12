@@ -2,20 +2,17 @@
 
 import logging
 import re
-from typing import Any
 
 import httpx
 from fastapi import APIRouter, Body, Header, Path, Request
 from pydantic import BaseModel
 
 from models import (
+  CheckoutCompleteRequest,
   CheckoutCreateRequest,
   CheckoutUpdateRequest,
   Order,
-  PaymentCreateRequest,
-  PaymentInstrument,
   PlatformConfig,
-  Ap2CompleteRequest,
 )
 from services.checkout_service import CheckoutService
 from services.fulfillment_service import FulfillmentService
@@ -24,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-SERVER_VERSION = "v2026-04-08"
+SERVER_VERSION = "2026-04-08"
 
 
 # --- Agent profile helpers ---
@@ -62,24 +59,33 @@ async def extract_webhook_url(ucp_agent: str) -> str | None:
   return None
 
 
+def parse_ucp_agent(ucp_agent: str) -> dict:
+  """Parse UCP-Agent header in RFC 8941 Dictionary format.
+
+  Expected format: profile="https://agent.example/.well-known/ucp"
+  Returns dict with extracted fields (profile URI, etc).
+  """
+  result = {}
+  # Extract profile URI (RFC 8941 Dictionary: key="value")
+  profile_match = re.search(r'profile="([^"]+)"', ucp_agent)
+  if profile_match:
+    profile_uri = profile_match.group(1)
+    if profile_uri.startswith("https://"):
+      result["profile"] = profile_uri
+  return result
+
+
 async def validate_ucp_headers(ucp_agent: str):
-  agent_version = SERVER_VERSION
-  match = re.search(r'(?:^|;)\s*version=(?:"([^"]+)"|([^;]+))', ucp_agent, re.IGNORECASE)
-  if match:
-    agent_version = (match.group(1) or match.group(2)).strip()
-  if agent_version > SERVER_VERSION:
-    from fastapi import HTTPException
-    raise HTTPException(
-      status_code=400,
-      detail={
-        "status": "error",
-        "errors": [{
-          "code": "VERSION_UNSUPPORTED",
-          "message": f"Version {agent_version} is not supported. This merchant implements version {SERVER_VERSION}.",
-          "severity": "critical",
-        }],
-      },
-    )
+  parsed = parse_ucp_agent(ucp_agent)
+  # D2: Validate profile URI format if present
+  if "profile" in parsed:
+    profile_uri = parsed["profile"]
+    if not profile_uri.startswith("https://"):
+      from fastapi import HTTPException
+      raise HTTPException(
+        status_code=400,
+        detail={"code": "INVALID_PROFILE", "message": "UCP-Agent profile must be an HTTPS URL"},
+      )
 
 
 def _get_service(request: Request) -> CheckoutService:
@@ -94,9 +100,13 @@ async def create_checkout(
   request: Request,
   body: CheckoutCreateRequest = Body(...),
   ucp_agent: str = Header(...),
-  request_signature: str = Header(...),
+  signature: str = Header(..., alias="Signature"),
   idempotency_key: str = Header(...),
   request_id: str = Header(...),
+  signature_input: str | None = Header(None, alias="Signature-Input"),
+  content_digest: str | None = Header(None, alias="Content-Digest"),
+  authorization: str | None = Header(None, alias="Authorization"),
+  x_api_key: str | None = Header(None, alias="X-API-Key"),
 ):
   await validate_ucp_headers(ucp_agent)
   service = _get_service(request)
@@ -115,8 +125,12 @@ async def get_checkout(
   request: Request,
   checkout_id: str = Path(..., alias="id"),
   ucp_agent: str = Header(...),
-  request_signature: str = Header(...),
+  signature: str = Header(..., alias="Signature"),
   request_id: str = Header(...),
+  signature_input: str | None = Header(None, alias="Signature-Input"),
+  content_digest: str | None = Header(None, alias="Content-Digest"),
+  authorization: str | None = Header(None, alias="Authorization"),
+  x_api_key: str | None = Header(None, alias="X-API-Key"),
 ):
   await validate_ucp_headers(ucp_agent)
   service = _get_service(request)
@@ -130,9 +144,13 @@ async def update_checkout(
   body: CheckoutUpdateRequest = Body(...),
   checkout_id: str = Path(..., alias="id"),
   ucp_agent: str = Header(...),
-  request_signature: str = Header(...),
+  signature: str = Header(..., alias="Signature"),
   idempotency_key: str = Header(...),
   request_id: str = Header(...),
+  signature_input: str | None = Header(None, alias="Signature-Input"),
+  content_digest: str | None = Header(None, alias="Content-Digest"),
+  authorization: str | None = Header(None, alias="Authorization"),
+  x_api_key: str | None = Header(None, alias="X-API-Key"),
 ):
   await validate_ucp_headers(ucp_agent)
   service = _get_service(request)
@@ -150,24 +168,20 @@ async def update_checkout(
 async def complete_checkout(
   request: Request,
   checkout_id: str = Path(..., alias="id"),
-  payment_data: dict[str, Any] = Body(...),
-  risk_signals: dict[str, Any] = Body(default={}),
-  ap2: Ap2CompleteRequest | None = Body(default=None),
+  body: CheckoutCompleteRequest = Body(...),
   ucp_agent: str = Header(...),
-  request_signature: str = Header(...),
+  signature: str = Header(..., alias="Signature"),
   idempotency_key: str = Header(...),
   request_id: str = Header(...),
+  signature_input: str | None = Header(None, alias="Signature-Input"),
+  content_digest: str | None = Header(None, alias="Content-Digest"),
+  authorization: str | None = Header(None, alias="Authorization"),
+  x_api_key: str | None = Header(None, alias="X-API-Key"),
 ):
   await validate_ucp_headers(ucp_agent)
   service = _get_service(request)
 
-  instrument = PaymentInstrument(**payment_data)
-  payment_req = PaymentCreateRequest(
-    selected_instrument_id=payment_data.get("id"),
-    instruments=[instrument],
-  )
-
-  result = await service.complete_checkout(checkout_id, payment_req, risk_signals, idempotency_key, ap2=ap2)
+  result = await service.complete_checkout(checkout_id, body, idempotency_key)
   return result.model_dump(mode="json", exclude_none=True)
 
 
@@ -176,9 +190,13 @@ async def cancel_checkout(
   request: Request,
   checkout_id: str = Path(..., alias="id"),
   ucp_agent: str = Header(...),
-  request_signature: str = Header(...),
+  signature: str = Header(..., alias="Signature"),
   idempotency_key: str = Header(...),
   request_id: str = Header(...),
+  signature_input: str | None = Header(None, alias="Signature-Input"),
+  content_digest: str | None = Header(None, alias="Content-Digest"),
+  authorization: str | None = Header(None, alias="Authorization"),
+  x_api_key: str | None = Header(None, alias="X-API-Key"),
 ):
   await validate_ucp_headers(ucp_agent)
   service = _get_service(request)
@@ -193,7 +211,7 @@ async def get_order(
   request: Request,
   order_id: str = Path(..., alias="id"),
   ucp_agent: str = Header(...),
-  request_signature: str = Header(...),
+  signature: str = Header(..., alias="Signature"),
   request_id: str = Header(...),
 ):
   await validate_ucp_headers(ucp_agent)
@@ -207,7 +225,7 @@ async def update_order(
   order_id: str = Path(..., alias="id"),
   order: Order = Body(...),
   ucp_agent: str = Header(...),
-  request_signature: str = Header(...),
+  signature: str = Header(..., alias="Signature"),
   request_id: str = Header(...),
 ):
   await validate_ucp_headers(ucp_agent)
@@ -222,7 +240,7 @@ async def ship_order(
   order_id: str = Path(..., alias="id"),
   simulation_secret: str = Header(..., alias="Simulation-Secret"),
   ucp_agent: str = Header(...),
-  request_signature: str = Header(...),
+  signature: str = Header(..., alias="Signature"),
   request_id: str = Header(...),
 ):
   await validate_ucp_headers(ucp_agent)
@@ -239,9 +257,9 @@ async def order_event_webhook(
   request: Request,
   partner_id: str,
   payload: Order = Body(...),
-  request_signature: str = Header(...),
+  signature: str = Header(..., alias="Signature"),
 ):
   service = _get_service(request)
   payload_dict = payload.model_dump(mode="json")
   await service.update_order(payload.id, payload_dict)
-  return {"status": "ok"}
+  return {"ucp": {"version": SERVER_VERSION, "status": "success"}}
