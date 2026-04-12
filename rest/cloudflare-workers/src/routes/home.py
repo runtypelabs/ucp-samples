@@ -75,9 +75,18 @@ HOME_HTML = """<!DOCTYPE html>
   .detail-json summary { color: var(--accent); cursor: pointer; font-size: 0.85rem; }
   .detail-json pre { max-height: 250px; overflow-y: auto; margin-top: 0.5rem; }
 
+  /* Checkout tabs */
+  .checkout-tabs { margin: 1rem 0; }
+  .tab-bar { display: flex; justify-content: center; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 0; }
+  .tab-btn { padding: 0.6rem 1.25rem; background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted); font-size: 0.9rem; font-weight: 500; cursor: pointer; transition: color 0.15s, border-color 0.15s; }
+  .tab-btn:hover { color: var(--fg); }
+  .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-panel { display: none; padding: 0.5rem 0 0; }
+  .tab-panel.active { display: block; }
+
   /* Steps */
   .step { display: flex; gap: 0.75rem; margin: 1rem 0; }
-  .step-num { flex-shrink: 0; width: 1.75rem; height: 1.75rem; border-radius: 50%; background: var(--accent); color: white; font-weight: 700; font-size: 0.85rem; display: flex; align-items: center; justify-content: center; margin-top: 0.1rem; }
+  .step-num { flex-shrink: 0; min-width: 1.75rem; height: 1.75rem; padding: 0 0.4rem; border-radius: 9999px; background: var(--accent); color: white; font-weight: 700; font-size: 0.8rem; display: flex; align-items: center; justify-content: center; margin-top: 0.1rem; }
   .step-content { flex: 1; }
   .step-content strong { color: var(--fg); }
   .try-btn { display: inline-block; margin-top: 0.5rem; padding: 0.4rem 1rem; background: var(--accent); color: white; border-radius: 6px; font-size: 0.85rem; font-weight: 500; cursor: pointer; border: none; }
@@ -90,8 +99,8 @@ HOME_HTML = """<!DOCTYPE html>
 <body>
 <div class="container">
   <h1>UCP Demo Server <span class="badge green">v2026-04-08</span></h1>
-  <p class="subtitle">A reference implementation of the <a href="https://ucp.dev">Universal Commerce Protocol</a> flower shop, running as a Python Worker on Cloudflare.</p>
-
+  <p class="subtitle">A reference implementation of the <a href="https://ucp.dev">Universal Commerce Protocol</a> specification. Meant to be a helpful aid to those building UCP clients.</p>
+  <p class="subtitle">The endpoints listed below are all live on this server, making it easy to test your UCP client using the reference flower shop data.</p>
   <h2>Catalog</h2>
   <div class="search-bar">
     <input type="text" id="searchInput" placeholder="Search products (e.g. roses, orchid, pot...)" />
@@ -133,35 +142,18 @@ HOME_HTML = """<!DOCTYPE html>
     </div>
   </div>
 
-  <div class="step">
-    <div class="step-num">3</div>
-    <div class="step-content">
-      <strong>Create a cart</strong>
-      <p>Add items to a lightweight cart for pre-checkout exploration.</p>
-      <pre><code>curl -X POST {{BASE}}/carts \\
-  -H <span class="string">"Content-Type: application/json"</span> \\
-  -H <span class="string">'UCP-Agent: profile="https://agent.example/profile"'</span> \\
-  -H <span class="string">"request-signature: test"</span> \\
-  -H <span class="string">"idempotency-key: &lt;unique-key&gt;"</span> \\
-  -H <span class="string">"request-id: &lt;unique-id&gt;"</span> \\
-  -d <span class="string">'{
-  "line_items": [
-    {"item": {"id": "bouquet_roses"}, "quantity": 2},
-    {"item": {"id": "pot_ceramic"}, "quantity": 1}
-  ],
-  "currency": "USD"
-}'</span></code></pre>
-      <button class="try-btn" onclick="tryCart(this)">Try it</button>
-      <div class="response-box"><pre><code></code></pre></div>
+  <div class="checkout-tabs">
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="switchTab('direct')">Direct checkout</button>
+      <button class="tab-btn" onclick="switchTab('cart')">Via cart</button>
     </div>
-  </div>
-
-  <div class="step">
-    <div class="step-num">4</div>
-    <div class="step-content">
-      <strong>Create a checkout</strong>
-      <p>Start a checkout session with line items from the catalog.</p>
-      <pre><code>curl -X POST {{BASE}}/checkout-sessions \\
+    <div class="tab-panel active" id="tab-direct">
+      <div class="step" style="margin-top:0">
+        <div class="step-num">3</div>
+        <div class="step-content">
+          <strong>Create a checkout</strong>
+          <p>Go straight to checkout with line items.</p>
+          <pre><code>curl -X POST {{BASE}}/checkout-sessions \\
   -H <span class="string">"Content-Type: application/json"</span> \\
   -H <span class="string">'UCP-Agent: profile="https://agent.example/profile"'</span> \\
   -H <span class="string">"request-signature: test"</span> \\
@@ -175,13 +167,55 @@ HOME_HTML = """<!DOCTYPE html>
   "currency": "USD",
   "payment": {"instruments": [], "handlers": []}
 }'</span></code></pre>
-      <button class="try-btn" onclick="tryCheckout(this)">Try it</button>
-      <div class="response-box"><pre><code></code></pre></div>
+          <button class="try-btn" onclick="tryCheckout(this)">Try it</button>
+          <div class="response-box"><pre><code></code></pre></div>
+        </div>
+      </div>
+    </div>
+    <div class="tab-panel" id="tab-cart">
+      <div class="step" style="margin-top:0">
+        <div class="step-num">3a</div>
+        <div class="step-content">
+          <strong>Create a cart</strong>
+          <p>Add items to a lightweight cart for exploration.</p>
+          <pre><code>curl -X POST {{BASE}}/carts \\
+  -H <span class="string">"Content-Type: application/json"</span> \\
+  -H <span class="string">'UCP-Agent: profile="https://agent.example/profile"'</span> \\
+  -H <span class="string">"request-signature: test"</span> \\
+  -H <span class="string">"idempotency-key: &lt;unique-key&gt;"</span> \\
+  -H <span class="string">"request-id: &lt;unique-id&gt;"</span> \\
+  -d <span class="string">'{
+  "line_items": [
+    {"item": {"id": "bouquet_roses"}, "quantity": 2},
+    {"item": {"id": "pot_ceramic"}, "quantity": 1}
+  ],
+  "currency": "USD"
+}'</span></code></pre>
+          <button class="try-btn" onclick="tryCart(this)">Try it</button>
+          <div class="response-box"><pre><code></code></pre></div>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">3b</div>
+        <div class="step-content">
+          <strong>Convert cart to checkout</strong>
+          <p>Pass <code>cart_id</code> to create a checkout from the cart.</p>
+          <pre><code>curl -X POST {{BASE}}/checkout-sessions \\
+  -H <span class="string">"Content-Type: application/json"</span> \\
+  -H <span class="string">'UCP-Agent: profile="https://agent.example/profile"'</span> \\
+  -H <span class="string">"request-signature: test"</span> \\
+  -H <span class="string">"idempotency-key: &lt;unique-key&gt;"</span> \\
+  -H <span class="string">"request-id: &lt;unique-id&gt;"</span> \\
+  -d <span class="string">'{"cart_id": "&lt;cart-id&gt;"}'</span></code></pre>
+          <button class="try-btn" onclick="tryCartCheckout(this)">Try it</button>
+          <div class="response-box"><pre><code></code></pre></div>
+        </div>
+      </div>
     </div>
   </div>
 
   <div class="step">
-    <div class="step-num">5</div>
+    <div class="step-num">4</div>
     <div class="step-content">
       <strong>Apply a discount</strong>
       <p>Update the checkout with a discount code. Available codes:</p>
@@ -237,7 +271,7 @@ HOME_HTML = """<!DOCTYPE html>
   </p>
 
   <footer>
-    UCP Demo Server &middot; v2026-04-08 &middot; Python + FastAPI on Cloudflare Workers &middot; D1 Database
+    Shipped with <svg style="display:inline-block;vertical-align:middle;margin:0 0.15rem" width="16" height="16" viewBox="0 0 24 24" fill="#ef4444" xmlns="http://www.w3.org/2000/svg"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg> by <a href="https://runtype.com" target="_blank" rel="noopener"><img src="https://www.runtype.com/runtype-text-only.svg" alt="Runtype" style="display:inline-block;vertical-align:middle;height:1em;filter:invert(1);margin-left:0.2rem" /></a>
   </footer>
 </div>
 
@@ -413,6 +447,39 @@ async function tryCart(btn) {
         ],
         currency: 'USD',
       }),
+    });
+    const data = await res.json();
+    if (data.id) lastCartId = data.id;
+    code.textContent = JSON.stringify(data, null, 2);
+  } catch(e) { code.textContent = 'Error: ' + e.message; }
+}
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelector('.tab-btn[onclick*="' + tab + '"]').classList.add('active');
+  document.getElementById('tab-' + tab).classList.add('active');
+}
+
+let lastCartId = null;
+
+async function tryCartCheckout(btn) {
+  const box = btn.nextElementSibling;
+  const code = box.querySelector('code');
+  box.style.display = 'block';
+
+  if (!lastCartId) {
+    code.textContent = 'No cart created yet. Click "Try it" on step 3a first.';
+    return;
+  }
+
+  code.textContent = 'Converting cart ' + lastCartId.slice(0,12) + '... to checkout...';
+  const key = 'demo-c2c-' + Date.now() + '-' + Math.random().toString(36).slice(2,8);
+  try {
+    const res = await fetch(BASE + '/checkout-sessions', {
+      method: 'POST',
+      headers: { ...UCP_HEADERS, 'idempotency-key': key },
+      body: JSON.stringify({ cart_id: lastCartId }),
     });
     const data = await res.json();
     code.textContent = JSON.stringify(data, null, 2);

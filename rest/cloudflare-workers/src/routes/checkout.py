@@ -107,7 +107,7 @@ async def create_checkout(
     platform_config = PlatformConfig(webhook_url=webhook_url)
 
   result = await service.create_checkout(body, idempotency_key, platform_config)
-  return result.model_dump(mode="json")
+  return result.model_dump(mode="json", exclude_none=True)
 
 
 @router.get("/checkout-sessions/{id}")
@@ -121,7 +121,7 @@ async def get_checkout(
   await validate_ucp_headers(ucp_agent)
   service = _get_service(request)
   result = await service.get_checkout(checkout_id)
-  return result.model_dump(mode="json")
+  return result.model_dump(mode="json", exclude_none=True)
 
 
 @router.put("/checkout-sessions/{id}")
@@ -143,7 +143,7 @@ async def update_checkout(
     platform_config = PlatformConfig(webhook_url=webhook_url)
 
   result = await service.update_checkout(checkout_id, body, idempotency_key, platform_config)
-  return result.model_dump(mode="json")
+  return result.model_dump(mode="json", exclude_none=True)
 
 
 @router.post("/checkout-sessions/{id}/complete")
@@ -168,7 +168,7 @@ async def complete_checkout(
   )
 
   result = await service.complete_checkout(checkout_id, payment_req, risk_signals, idempotency_key, ap2=ap2)
-  return result.model_dump(mode="json")
+  return result.model_dump(mode="json", exclude_none=True)
 
 
 @router.post("/checkout-sessions/{id}/cancel")
@@ -183,7 +183,7 @@ async def cancel_checkout(
   await validate_ucp_headers(ucp_agent)
   service = _get_service(request)
   result = await service.cancel_checkout(checkout_id, idempotency_key)
-  return result.model_dump(mode="json")
+  return result.model_dump(mode="json", exclude_none=True)
 
 
 # --- Order routes ---

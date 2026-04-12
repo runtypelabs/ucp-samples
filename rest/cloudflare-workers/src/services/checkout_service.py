@@ -21,6 +21,7 @@ from exceptions import (
 from models import (
   Ap2CompleteRequest,
   Allocation,
+  Cart,
   AppliedDiscount,
   Checkout,
   CheckoutCreateRequest,
@@ -81,16 +82,31 @@ class CheckoutService:
 
     checkout_id = checkout_req.id or str(uuid.uuid4())
 
-    line_items = []
-    for li_req in checkout_req.line_items:
-      line_items.append(
-        LineItemResponse(
-          id=str(uuid.uuid4()),
-          item=ItemResponse(id=li_req.item.id, title=li_req.item.title or "", price=0),
-          quantity=li_req.quantity,
-          totals=[],
+    # Cart-to-checkout conversion: use cart contents when cart_id is provided
+    if checkout_req.cart_id:
+      cart_data = await db.get_cart(self.db, checkout_req.cart_id)
+      if not cart_data:
+        raise ResourceNotFoundError(f"Cart {checkout_req.cart_id} not found")
+      cart = Cart(**cart_data)
+      if cart.status == "canceled":
+        raise InvalidRequestError(f"Cart {checkout_req.cart_id} is canceled")
+      # Use cart's line_items, buyer, and currency (ignore overlapping checkout fields per spec)
+      line_items = cart.line_items
+      if cart.buyer:
+        checkout_req.buyer = cart.buyer
+      if cart.currency:
+        checkout_req.currency = cart.currency
+    else:
+      line_items = []
+      for li_req in checkout_req.line_items:
+        line_items.append(
+          LineItemResponse(
+            id=str(uuid.uuid4()),
+            item=ItemResponse(id=li_req.item.id, title=li_req.item.title or "", price=0),
+            quantity=li_req.quantity,
+            totals=[],
+          )
         )
-      )
 
     # Initialize fulfillment response
     fulfillment_resp = None

@@ -53,7 +53,7 @@ async def create_cart(
   await _validate_ucp_headers(ucp_agent)
   service = _get_service(request)
   result = await service.create_cart(body, idempotency_key)
-  return result.model_dump(mode="json")
+  return result.model_dump(mode="json", exclude_none=True)
 
 
 @router.get("/carts/{id}")
@@ -67,7 +67,7 @@ async def get_cart(
   await _validate_ucp_headers(ucp_agent)
   service = _get_service(request)
   result = await service.get_cart(cart_id)
-  return result.model_dump(mode="json")
+  return result.model_dump(mode="json", exclude_none=True)
 
 
 @router.put("/carts/{id}")
@@ -83,7 +83,7 @@ async def update_cart(
   await _validate_ucp_headers(ucp_agent)
   service = _get_service(request)
   result = await service.update_cart(cart_id, body, idempotency_key)
-  return result.model_dump(mode="json")
+  return result.model_dump(mode="json", exclude_none=True)
 
 
 @router.post("/carts/{id}/cancel")
@@ -98,4 +98,4 @@ async def cancel_cart(
   await _validate_ucp_headers(ucp_agent)
   service = _get_service(request)
   result = await service.cancel_cart(cart_id, idempotency_key)
-  return result.model_dump(mode="json")
+  return result.model_dump(mode="json", exclude_none=True)

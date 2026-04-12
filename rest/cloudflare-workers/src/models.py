@@ -271,6 +271,7 @@ class Ap2CompleteRequest(BaseModel):
 
 class CheckoutCreateRequest(BaseModel):
   id: str | None = None
+  cart_id: str | None = None
   line_items: list[LineItemRequest] = []
   buyer: Buyer | None = None
   currency: str = "USD"
