@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from exceptions import UcpError
+from routes.cart import router as cart_router
 from routes.catalog import router as catalog_router
 from routes.checkout import router as checkout_router
 from routes.discovery import router as discovery_router
@@ -29,6 +30,7 @@ async def ucp_exception_handler(request: Request, exc: UcpError):
 
 
 app.include_router(home_router)
+app.include_router(cart_router)
 app.include_router(catalog_router)
 app.include_router(checkout_router)
 app.include_router(discovery_router)

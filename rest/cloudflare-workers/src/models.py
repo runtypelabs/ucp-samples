@@ -459,3 +459,47 @@ class CatalogProductResponse(BaseModel):
   ucp: CatalogUcp
   product: CatalogProduct | None = None
   messages: list[CatalogMessage] = []
+
+
+# --- Cart (v2026-04-08) ---
+
+class ResponseCart(BaseModel):
+  version: str
+  capabilities: list[ResponseCapability] = []
+
+
+class CartCreateRequest(BaseModel):
+  line_items: list[LineItemRequest] = []
+  currency: str = "USD"
+  buyer: Buyer | None = None
+  context: Any | None = None
+  signals: Any | None = None
+
+  model_config = {"extra": "allow"}
+
+
+class CartUpdateRequest(BaseModel):
+  id: str | None = None
+  line_items: list[LineItemRequest] | None = None
+  currency: str | None = None
+  buyer: Buyer | None = None
+  context: Any | None = None
+  signals: Any | None = None
+
+  model_config = {"extra": "allow"}
+
+
+class Cart(BaseModel):
+  ucp: ResponseCart | None = None
+  id: str
+  line_items: list[LineItemResponse] = []
+  buyer: Buyer | None = None
+  status: str = "active"
+  currency: str = "USD"
+  totals: list[TotalResponse] = []
+  messages: Any | None = None
+  links: list[Any] = []
+  continue_url: str | None = None
+  expires_at: str | None = None
+
+  model_config = {"extra": "allow"}

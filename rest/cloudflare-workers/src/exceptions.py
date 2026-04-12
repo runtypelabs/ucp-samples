@@ -34,6 +34,11 @@ class PaymentFailedError(UcpError):
     super().__init__(message, code=code, status_code=status_code)
 
 
+class CartNotModifiableError(UcpError):
+  def __init__(self, message):
+    super().__init__(message, code="CART_NOT_MODIFIABLE", status_code=409)
+
+
 class InvalidRequestError(UcpError):
   def __init__(self, message):
     super().__init__(message, code="INVALID_REQUEST", status_code=400)

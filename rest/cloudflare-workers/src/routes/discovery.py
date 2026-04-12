@@ -61,6 +61,12 @@ DISCOVERY_PROFILE_TEMPLATE = {
         "extends": "dev.ucp.shopping.checkout"
       },
       {
+        "name": "dev.ucp.shopping.cart",
+        "version": "v2026-04-08",
+        "spec": "https://ucp.dev/specification/cart",
+        "schema": "https://ucp.dev/schemas/shopping/cart.json"
+      },
+      {
         "name": "dev.ucp.shopping.catalog.search",
         "version": "v2026-04-08",
         "spec": "https://ucp.dev/v2026-04-08/specification/catalog/search",

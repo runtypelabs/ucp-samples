@@ -292,3 +292,34 @@ async def get_product_detail(db, product_id):
     "WHERE p.id = ?"
   ).bind(product_id).first()
   return result
+
+
+# --- Carts ---
+
+
+async def save_cart(db, cart_id, status, cart_obj):
+  """Save or update a cart session."""
+  now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+  data_json = json.dumps(cart_obj)
+  existing = await db.prepare(
+    "SELECT id FROM carts WHERE id = ?"
+  ).bind(cart_id).first()
+
+  if existing:
+    await db.prepare(
+      "UPDATE carts SET status = ?, data = ?, updated_at = ? WHERE id = ?"
+    ).bind(status, data_json, now, cart_id).run()
+  else:
+    await db.prepare(
+      "INSERT INTO carts (id, status, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
+    ).bind(cart_id, status, data_json, now, now).run()
+
+
+async def get_cart(db, cart_id):
+  """Retrieve a cart session by ID."""
+  result = await db.prepare(
+    "SELECT data FROM carts WHERE id = ?"
+  ).bind(cart_id).first()
+  if result:
+    return json.loads(result.data)
+  return None
