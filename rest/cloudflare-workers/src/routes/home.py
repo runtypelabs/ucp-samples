@@ -234,13 +234,14 @@ HOME_HTML = """<!DOCTYPE html>
     <div class="step-num">4</div>
     <div class="step-content">
       <strong>Apply a discount</strong>
-      <p>Update the checkout with a discount code. Available codes:</p>
-      <table>
-        <tr><th>Code</th><th>Type</th><th>Value</th></tr>
-        <tr><td><code>10OFF</code></td><td>Percentage</td><td>10% off</td></tr>
-        <tr><td><code>WELCOME20</code></td><td>Percentage</td><td>20% off</td></tr>
-        <tr><td><code>FIXED500</code></td><td>Fixed</td><td>$5.00 off</td></tr>
-      </table>
+      <p>Update the checkout with a discount code. Pick a code and click "Apply":</p>
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin:0.75rem 0">
+        <button class="option-chip selected" onclick="selectDiscount('10OFF', this)"><code>10OFF</code> 10% off</button>
+        <button class="option-chip" onclick="selectDiscount('WELCOME20', this)"><code>WELCOME20</code> 20% off</button>
+        <button class="option-chip" onclick="selectDiscount('FIXED500', this)"><code>FIXED500</code> $5 off</button>
+      </div>
+      <button class="try-btn" onclick="tryDiscount(this)">Apply to checkout</button>
+      <div class="response-box"><pre><code></code></pre></div>
     </div>
   </div>
 
@@ -566,6 +567,8 @@ function switchTab(tab) {
 }
 
 let lastCartId = null;
+let lastCheckoutId = null;
+let selectedDiscountCode = '10OFF';
 
 async function tryCartCheckout(btn) {
   const box = btn.nextElementSibling;
@@ -586,6 +589,7 @@ async function tryCartCheckout(btn) {
       body: JSON.stringify({ cart_id: lastCartId, line_items: [] }),
     });
     const data = await res.json();
+    if (data.id) lastCheckoutId = data.id;
     code.textContent = JSON.stringify(data, null, 2);
   } catch(e) { code.textContent = 'Error: ' + e.message; }
 }
@@ -677,6 +681,36 @@ async function tryCheckout(btn) {
       body: JSON.stringify(body),
     });
     const data = await res.json();
+    if (data.id) lastCheckoutId = data.id;
+    code.textContent = JSON.stringify(data, null, 2);
+  } catch(e) { code.textContent = 'Error: ' + e.message; }
+}
+
+function selectDiscount(code, btn) {
+  selectedDiscountCode = code;
+  btn.parentElement.querySelectorAll('.option-chip').forEach(b => b.classList.remove('selected'));
+  btn.classList.add('selected');
+}
+
+async function tryDiscount(btn) {
+  var box = btn.nextElementSibling;
+  var code = box.querySelector('code');
+  box.style.display = 'block';
+
+  if (!lastCheckoutId) {
+    code.textContent = 'No checkout created yet. Click "Try it" on step 3 first.';
+    return;
+  }
+
+  code.textContent = 'Applying ' + selectedDiscountCode + ' to checkout ' + lastCheckoutId.slice(0,12) + '...';
+  var key = 'demo-discount-' + Date.now() + '-' + Math.random().toString(36).slice(2,8);
+  try {
+    var res = await fetch(BASE + '/checkout-sessions/' + lastCheckoutId, {
+      method: 'PUT',
+      headers: { ...UCP_HEADERS, 'idempotency-key': key },
+      body: JSON.stringify({ discounts: { codes: [selectedDiscountCode] } }),
+    });
+    var data = await res.json();
     code.textContent = JSON.stringify(data, null, 2);
   } catch(e) { code.textContent = 'Error: ' + e.message; }
 }
