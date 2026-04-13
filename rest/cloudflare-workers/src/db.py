@@ -199,6 +199,42 @@ async def get_order(db, order_id):
   return None
 
 
+async def get_session_by_id(db, session_id):
+  """Look up a session ID across carts, checkouts, and orders tables."""
+  cart = await get_cart(db, session_id)
+  if cart:
+    return {"type": "cart", "data": cart}
+
+  checkout = await get_checkout_session(db, session_id)
+  if checkout:
+    return {"type": "checkout", "data": checkout}
+
+  order = await get_order(db, session_id)
+  if order:
+    return {"type": "order", "data": order}
+
+  return None
+
+
+async def get_request_logs_for_session(db, checkout_id, limit=50):
+  """Get request logs filtered by checkout_id."""
+  result = await db.prepare(
+    "SELECT id, timestamp, method, url, checkout_id, payload "
+    "FROM request_logs WHERE checkout_id = ? "
+    "ORDER BY id DESC LIMIT ?"
+  ).bind(checkout_id, limit).all()
+  rows = result.results if result else []
+  logs = []
+  for row in rows:
+    logs.append({
+      "id": row.id, "timestamp": row.timestamp,
+      "method": row.method, "url": row.url,
+      "checkout_id": row.checkout_id,
+      "payload": json.loads(row.payload) if row.payload else None,
+    })
+  return logs
+
+
 async def log_request(db, method, url, checkout_id=None, payload=None):
   """Log an HTTP request to the database."""
   timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()

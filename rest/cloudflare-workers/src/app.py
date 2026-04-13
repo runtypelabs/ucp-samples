@@ -11,6 +11,7 @@ from routes.catalog import router as catalog_router
 from routes.checkout import router as checkout_router
 from routes.discovery import router as discovery_router
 from routes.home import router as home_router
+from routes.platform import router as platform_router
 
 logging.basicConfig(level=logging.INFO)
 
@@ -34,3 +35,4 @@ app.include_router(cart_router)
 app.include_router(catalog_router)
 app.include_router(checkout_router)
 app.include_router(discovery_router)
+app.include_router(platform_router)
