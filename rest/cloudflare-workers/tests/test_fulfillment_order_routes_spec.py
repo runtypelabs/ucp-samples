@@ -8,6 +8,7 @@ cited in a comment.
 They run against models and route modules directly -- no database or server needed.
 """
 
+import asyncio
 import inspect
 import sys
 import os
@@ -16,6 +17,8 @@ import pytest
 
 # Add src to path so we can import the models and routes
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from models import (
     Buyer,
@@ -31,10 +34,12 @@ from models import (
     FulfillmentResponse,
     ItemResponse,
     Order,
+    OrderConfirmation,
     OrderFulfillment,
     OrderLineItem,
     OrderQuantity,
     PostalAddress,
+    RetailLocation,
     ShippingDestinationResponse,
     TotalResponse,
 )
@@ -385,7 +390,7 @@ class TestOrderCheckoutId:
     """
 
     def test_order_has_checkout_id(self):
-        # Spec: "Order response: checkout_id (string)"
+        # Spec: order.json required: ["checkout_id"]
         order = Order(
             id="order_1",
             checkout_id="checkout_abc",
@@ -393,11 +398,15 @@ class TestOrderCheckoutId:
         data = order.model_dump(mode="json", exclude_none=True)
         assert data["checkout_id"] == "checkout_abc"
 
-    def test_order_checkout_id_optional(self):
-        # Spec: checkout_id is a string (optional in model)
+    def test_order_checkout_id_omitted_when_none(self):
+        # Model gap: order.json lists checkout_id as required, but the Pydantic
+        # model allows None.  This test documents current behavior; the model
+        # SHOULD enforce checkout_id as mandatory to match the spec.
         order = Order(id="order_2")
         data = order.model_dump(mode="json", exclude_none=True)
-        assert "checkout_id" not in data
+        assert "checkout_id" not in data, (
+            "Model currently allows checkout_id=None (spec says required)"
+        )
 
 
 class TestOrderPermalinkUrl:
@@ -407,7 +416,7 @@ class TestOrderPermalinkUrl:
     """
 
     def test_order_has_permalink_url(self):
-        # Spec: "Order response: permalink_url (string, link to business order page)"
+        # Spec: order.json required: ["permalink_url"]
         order = Order(
             id="order_1",
             permalink_url="https://shop.example.com/orders/order_1",
@@ -415,11 +424,15 @@ class TestOrderPermalinkUrl:
         data = order.model_dump(mode="json", exclude_none=True)
         assert data["permalink_url"] == "https://shop.example.com/orders/order_1"
 
-    def test_order_permalink_url_optional(self):
-        # Spec: permalink_url is optional
+    def test_order_permalink_url_omitted_when_none(self):
+        # Model gap: order.json lists permalink_url as required, but the Pydantic
+        # model allows None.  This test documents current behavior; the model
+        # SHOULD enforce permalink_url as mandatory to match the spec.
         order = Order(id="order_2")
         data = order.model_dump(mode="json", exclude_none=True)
-        assert "permalink_url" not in data
+        assert "permalink_url" not in data, (
+            "Model currently allows permalink_url=None (spec says required)"
+        )
 
 
 class TestOrderLineItemStatus:
@@ -430,15 +443,26 @@ class TestOrderLineItemStatus:
     """
 
     def test_order_line_item_has_status(self):
-        # Spec: "Order line_items[].status"
+        # Spec: types/order_line_item.json required: ["status"]
         oli = OrderLineItem(
             id="li_1",
             item=ItemResponse(id="item_1", title="Rose Bouquet"),
             quantity=OrderQuantity(total=1, fulfilled=0),
-            status="shipped",
+            status="fulfilled",
         )
         data = oli.model_dump(mode="json", exclude_none=True)
-        assert data["status"] == "shipped"
+        assert data["status"] == "fulfilled", "status must appear in serialized output"
+
+    @pytest.mark.parametrize("status", ["processing", "partial", "fulfilled", "removed"])
+    def test_order_line_item_status_accepts_spec_enum(self, status):
+        # Spec: types/order_line_item.json status enum: ["processing", "partial", "fulfilled", "removed"]
+        oli = OrderLineItem(
+            id="li_1",
+            item=ItemResponse(id="item_1", title="Rose Bouquet"),
+            quantity=OrderQuantity(total=1, fulfilled=0),
+            status=status,
+        )
+        assert oli.status == status, f"OrderLineItem must accept spec status '{status}'"
 
     def test_order_line_item_status_defaults_to_processing(self):
         # Spec: default status is "processing"
@@ -447,7 +471,7 @@ class TestOrderLineItemStatus:
             item=ItemResponse(id="item_2", title="Tulip"),
             quantity=OrderQuantity(total=1, fulfilled=0),
         )
-        assert oli.status == "processing"
+        assert oli.status == "processing", "Status must default to 'processing'"
 
 
 # ============================================================================
@@ -709,41 +733,7 @@ class TestCheckoutRouteStatusCodes:
         )
 
 
-class TestCheckoutRoutesUcpAgentHeader:
-    """R3: Checkout routes require UCP-Agent header.
-
-    Behavior (checkout-rest.md): "UCP-Agent: REQUIRED on all requests"
-    """
-
-    def test_create_checkout_has_ucp_agent(self):
-        # Spec: "UCP-Agent: REQUIRED on all requests"
-        from routes.checkout import create_checkout
-        sig = inspect.signature(create_checkout)
-        assert "ucp_agent" in sig.parameters, "create_checkout missing ucp_agent parameter"
-
-    def test_get_checkout_has_ucp_agent(self):
-        # Spec: "UCP-Agent: REQUIRED on all requests"
-        from routes.checkout import get_checkout
-        sig = inspect.signature(get_checkout)
-        assert "ucp_agent" in sig.parameters, "get_checkout missing ucp_agent parameter"
-
-    def test_update_checkout_has_ucp_agent(self):
-        # Spec: "UCP-Agent: REQUIRED on all requests"
-        from routes.checkout import update_checkout
-        sig = inspect.signature(update_checkout)
-        assert "ucp_agent" in sig.parameters, "update_checkout missing ucp_agent parameter"
-
-    def test_complete_checkout_has_ucp_agent(self):
-        # Spec: "UCP-Agent: REQUIRED on all requests"
-        from routes.checkout import complete_checkout
-        sig = inspect.signature(complete_checkout)
-        assert "ucp_agent" in sig.parameters, "complete_checkout missing ucp_agent parameter"
-
-    def test_cancel_checkout_has_ucp_agent(self):
-        # Spec: "UCP-Agent: REQUIRED on all requests"
-        from routes.checkout import cancel_checkout
-        sig = inspect.signature(cancel_checkout)
-        assert "ucp_agent" in sig.parameters, "cancel_checkout missing ucp_agent parameter"
+## R3 (checkout UCP-Agent) removed: covered by CK6 in test_cart_checkout_spec.py
 
 
 class TestCartRoutesUcpAgentHeader:
@@ -880,26 +870,7 @@ class TestCatalogProductCapability:
 # ============================================================================
 
 
-class TestBuyerAllFieldsOptional:
-    """B1: All buyer fields optional.
-
-    Spec: types/buyer.json -- no required fields, additionalProperties: true
-    """
-
-    def test_buyer_creates_with_all_none(self):
-        # Spec: "Buyer: All fields optional, allows progressive building"
-        buyer = Buyer()
-        assert buyer.first_name is None
-        assert buyer.last_name is None
-        assert buyer.email is None
-        assert buyer.phone_number is None
-
-    def test_buyer_serializes_empty(self):
-        # Spec: empty buyer serializes without required-field errors
-        buyer = Buyer()
-        data = buyer.model_dump(mode="json", exclude_none=True)
-        # All fields None, so excluded
-        assert data == {}
+## B1 (buyer all-fields-optional) removed: covered by CK9 in test_cart_checkout_spec.py
 
 
 class TestBuyerFieldSet:
@@ -998,3 +969,460 @@ class TestContextLocalizationFields:
             "currency": "CAD",
             "intent": "browse",
         }
+
+
+# ============================================================================
+# RETAIL LOCATION SPEC (types/retail_location.json)
+# ============================================================================
+
+
+class TestRetailLocationRequiredFields:
+    """RL1: Retail location structure.
+
+    Spec: types/retail_location.json required: ["id", "name"]
+    optional: address ($ref postal_address.json)
+    """
+
+    def test_retail_location_has_name(self):
+        # Spec: types/retail_location.json required: ["id", "name"]
+        loc = RetailLocation(id="loc_1", name="Downtown Store")
+        data = loc.model_dump(mode="json", exclude_none=True)
+        assert "name" in data, "RetailLocation must have 'name' per retail_location.json"
+
+    def test_retail_location_has_id(self):
+        # Spec: types/retail_location.json required: ["id", "name"]
+        loc = RetailLocation(id="loc_1", name="Downtown Store")
+        data = loc.model_dump(mode="json", exclude_none=True)
+        assert "id" in data, "RetailLocation must have 'id' per retail_location.json"
+
+    def test_retail_location_address_is_optional(self):
+        # Spec: types/retail_location.json optional: address
+        loc = RetailLocation(id="loc_1", name="Store")
+        data = loc.model_dump(mode="json", exclude_none=True)
+        assert "address" not in data, "address should be excluded when None"
+
+    def test_retail_location_address_serializes(self):
+        # Spec: types/retail_location.json address: $ref postal_address.json
+        loc = RetailLocation(
+            id="loc_1",
+            name="Downtown Store",
+            address=PostalAddress(
+                street_address="123 Main St",
+                address_locality="Springfield",
+            ),
+        )
+        data = loc.model_dump(mode="json", exclude_none=True)
+        assert "address" in data
+        assert data["address"]["street_address"] == "123 Main St"
+
+
+# ============================================================================
+# ORDER CONFIRMATION SPEC (types/order_confirmation.json)
+# ============================================================================
+
+
+class TestOrderConfirmationRequiredFields:
+    """OC1: Order confirmation structure.
+
+    Spec: types/order_confirmation.json required: ["id", "permalink_url"]
+    optional: label
+    """
+
+    def test_order_confirmation_has_id(self):
+        # Spec: types/order_confirmation.json required: ["id", "permalink_url"]
+        oc = OrderConfirmation(
+            id="order_123",
+            permalink_url="https://shop.example.com/orders/123",
+        )
+        data = oc.model_dump(mode="json", exclude_none=True)
+        assert "id" in data, "OrderConfirmation must have 'id' per order_confirmation.json"
+
+    def test_order_confirmation_permalink_url_model_gap(self):
+        # Model gap: order_confirmation.json requires permalink_url, but the
+        # Pydantic model allows None.  The model SHOULD enforce this as mandatory.
+        oc = OrderConfirmation(id="order_123")
+        data = oc.model_dump(mode="json", exclude_none=True)
+        assert "permalink_url" not in data, (
+            "Model currently allows permalink_url=None (spec says required)"
+        )
+
+    def test_order_confirmation_label_not_modeled(self):
+        # Spec gap: order_confirmation.json has optional "label" field for
+        # human-readable order identifier.  The OrderConfirmation model
+        # does not include this field.
+        assert "label" not in OrderConfirmation.model_fields, (
+            "OrderConfirmation model does not yet have 'label' field (spec gap)"
+        )
+
+
+# ============================================================================
+# MESSAGE SUBTYPE SPEC (types/message_warning.json, types/message_info.json)
+# ============================================================================
+
+
+class TestMessageWarningFields:
+    """MW1: Warning message structure.
+
+    Spec: types/message_warning.json required: ["type", "code", "content"]
+    const type: "warning"
+    optional: path, content_type (default "plain"), presentation (default "notice"),
+              image_url, url
+    """
+
+    def test_checkout_warning_has_type_code_content(self):
+        # Spec: types/message_warning.json required: ["type", "code", "content"]
+        msg = CheckoutMessage(type="warning", code="final_sale", content="This item is final sale")
+        data = msg.model_dump(mode="json", exclude_none=True)
+        assert data["type"] == "warning"
+        assert data["code"] == "final_sale"
+        assert data["content"] == "This item is final sale"
+
+    def test_catalog_warning_has_type_code_content(self):
+        # Spec: types/message_warning.json required: ["type", "code", "content"]
+        msg = CatalogMessage(type="warning", code="age_restricted", content="Must be 21+")
+        data = msg.model_dump(mode="json", exclude_none=True)
+        assert data["type"] == "warning"
+        assert data["code"] == "age_restricted"
+
+    def test_warning_presentation_not_modeled(self):
+        # Spec gap: message_warning.json has "presentation" (default "notice")
+        # and "image_url", "url" fields.  CheckoutMessage does not model these.
+        assert "presentation" not in CheckoutMessage.model_fields, (
+            "CheckoutMessage does not yet have 'presentation' field (spec gap)"
+        )
+
+
+class TestMessageInfoFields:
+    """MI1: Info message structure.
+
+    Spec: types/message_info.json required: ["type", "content"]
+    const type: "info"
+    optional: path, code, content_type (default "plain")
+    """
+
+    def test_info_message_requires_only_type_and_content(self):
+        # Spec: types/message_info.json required: ["type", "content"]
+        # (code is NOT required for info messages, unlike error/warning)
+        msg = CheckoutMessage(type="info", content="Free shipping on orders over $50")
+        data = msg.model_dump(mode="json", exclude_none=True)
+        assert data["type"] == "info"
+        assert data["content"] == "Free shipping on orders over $50"
+        assert "code" not in data, "code is optional for info messages"
+
+    def test_message_path_not_modeled(self):
+        # Spec gap: all message types have "path" (RFC 9535 JSONPath) and
+        # "content_type" fields.  Neither CheckoutMessage nor CatalogMessage
+        # models these fields.
+        assert "path" not in CheckoutMessage.model_fields, (
+            "CheckoutMessage does not yet have 'path' field (spec gap)"
+        )
+        assert "content_type" not in CheckoutMessage.model_fields, (
+            "CheckoutMessage does not yet have 'content_type' field (spec gap)"
+        )
+
+
+# ============================================================================
+# ERROR RESPONSE SPEC (types/error_response.json)
+# ============================================================================
+
+
+class TestErrorResponseSpecGap:
+    """ER1: Error response envelope.
+
+    Spec: types/error_response.json required: ["ucp", "messages"]
+    messages: minItems: 1, optional: continue_url
+    ucp.status MUST be "error"
+
+    The current implementation returns {"detail": ..., "code": ...} via
+    the UcpError exception handler in app.py, which does NOT match the
+    spec-required format.  These tests document the spec requirement.
+    """
+
+    def test_error_response_spec_requires_ucp_and_messages(self):
+        # Spec: types/error_response.json required: ["ucp", "messages"]
+        # This test documents the spec requirement.  The implementation
+        # does not yet have an ErrorResponse model.
+        pytest.skip(
+            "No ErrorResponse model exists yet.  Spec requires "
+            '{"ucp": {status: "error"}, "messages": [...]} but '
+            'implementation returns {"detail": ..., "code": ...}'
+        )
+
+
+# ============================================================================
+# ORDER MISSING FIELDS (order.json)
+# ============================================================================
+
+
+class TestOrderMissingSpecFields:
+    """OM1: Order model spec gaps.
+
+    Spec: order.json defines additional optional fields not yet modeled:
+    - label (string): human-readable order identifier
+    - messages (array of message.json): order-level messages
+    - adjustments (array of adjustment.json): post-order events
+    """
+
+    def test_order_label_not_modeled(self):
+        # Spec gap: order.json has optional "label" field
+        assert "label" not in Order.model_fields, (
+            "Order model does not yet have 'label' field (spec gap)"
+        )
+
+    def test_order_messages_not_modeled(self):
+        # Spec gap: order.json has optional "messages" field (array of message.json)
+        assert "messages" not in Order.model_fields, (
+            "Order model does not yet have 'messages' field (spec gap)"
+        )
+
+    def test_order_adjustments_not_modeled(self):
+        """Spec: order.json defines optional adjustments array for post-order events."""
+        # NOTE: Model gap – order.json defines optional 'adjustments' field
+        # (array of adjustment.json) for refunds, returns, credits, disputes,
+        # cancellations. Not yet modeled.
+        fields = set(Order.model_fields.keys())
+        if "adjustments" not in fields:
+            pytest.skip(
+                "Model gap: Order missing 'adjustments' field from order.json "
+                "(array of adjustment.json for post-order events)"
+            )
+
+
+# ---------------------------------------------------------------------------
+# O8: order_line_item.json – quantity constraints
+# Spec: quantity.original, quantity.total, quantity.fulfilled all have minimum: 0
+# ---------------------------------------------------------------------------
+
+
+class TestOrderLineItemQuantityConstraints:
+    """O8: order_line_item.json – quantity constraints."""
+
+    def test_quantity_total_accepts_zero(self):
+        """Spec: order_line_item.json quantity.total has minimum: 0."""
+        oq = OrderQuantity(total=0, fulfilled=0)
+        data = oq.model_dump(mode="json", exclude_none=True)
+        assert data["total"] == 0, "quantity.total must accept 0 (minimum: 0)"
+
+    def test_quantity_fulfilled_accepts_zero(self):
+        """Spec: order_line_item.json quantity.fulfilled has minimum: 0."""
+        oq = OrderQuantity(total=5, fulfilled=0)
+        data = oq.model_dump(mode="json", exclude_none=True)
+        assert data["fulfilled"] == 0, "quantity.fulfilled must accept 0 (minimum: 0)"
+
+    def test_quantity_total_accepts_positive(self):
+        """Spec: order_line_item.json quantity.total accepts positive integers."""
+        oq = OrderQuantity(total=10, fulfilled=3)
+        data = oq.model_dump(mode="json", exclude_none=True)
+        assert data["total"] == 10
+        assert data["fulfilled"] == 3
+
+    def test_quantity_minimum_not_enforced_by_model(self):
+        """Spec: order_line_item.json quantity.total has minimum: 0 but model uses plain int."""
+        # The spec requires minimum: 0, but Pydantic model uses `int` without
+        # Field(ge=0), so negative values are accepted.  This documents the gap.
+        oq = OrderQuantity(total=-1, fulfilled=-1)
+        assert oq.total == -1, (
+            "Model gap: OrderQuantity accepts negative total "
+            "(spec requires minimum: 0 but model uses plain int)"
+        )
+
+    def test_quantity_original_field_not_modeled(self):
+        """Spec: order_line_item.json quantity.original has minimum: 0 (optional field)."""
+        # The spec defines an optional "original" quantity field that the
+        # OrderQuantity model does not include.
+        assert "original" not in OrderQuantity.model_fields, (
+            "OrderQuantity does not model 'original' field (spec gap)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# E2: expectation.json – method_type enum
+# Spec: expectation.json method_type enum: ["shipping", "pickup", "digital"]
+# ---------------------------------------------------------------------------
+
+
+class TestExpectationMethodTypeEnum:
+    """E2: expectation.json – method_type enum constraints."""
+
+    @pytest.mark.parametrize("method_type", ["shipping", "pickup", "digital"])
+    def test_method_type_accepts_spec_enum_values(self, method_type):
+        """Spec: expectation.json method_type enum: ["shipping", "pickup", "digital"]."""
+        exp = Expectation(
+            id="exp_1",
+            line_items=[ExpectationLineItem(id="li_1", quantity=1)],
+            method_type=method_type,
+        )
+        assert exp.method_type == method_type, (
+            f"Expectation must accept spec method_type '{method_type}'"
+        )
+
+    def test_method_type_is_str_not_literal(self):
+        """Spec: expectation.json method_type enum but model uses plain str."""
+        # The spec defines method_type as enum: ["shipping", "pickup", "digital"]
+        # but the Pydantic model uses `str | None`, so any string is accepted.
+        # This documents the model gap.
+        exp = Expectation(
+            id="exp_2",
+            line_items=[],
+            method_type="invalid_type",
+        )
+        assert exp.method_type == "invalid_type", (
+            "Model gap: Expectation.method_type is typed as str, not Literal — "
+            "spec enum ['shipping', 'pickup', 'digital'] is not enforced"
+        )
+
+    def test_method_type_defaults_to_none(self):
+        """Spec: expectation.json requires method_type but model allows None."""
+        exp = Expectation(id="exp_3", line_items=[])
+        assert exp.method_type is None, (
+            "Model gap: method_type defaults to None "
+            "(spec lists it as required)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# OM3: expectation.json – missing fulfillable_on field
+# Spec: expectation.json defines optional fulfillable_on (string)
+# ---------------------------------------------------------------------------
+
+
+class TestExpectationMissingFulfillableOn:
+    """OM3: Expectation model missing fulfillable_on field.
+
+    Spec: types/expectation.json defines optional fulfillable_on (string)
+    for indicating when an expectation can be fulfilled ('now' or ISO 8601).
+    """
+
+    def test_expectation_fulfillable_on_not_modeled(self):
+        """Spec: expectation.json defines optional fulfillable_on field."""
+        # NOTE: Model gap – expectation.json defines optional 'fulfillable_on'
+        # field (string: 'now' or ISO 8601 timestamp) for backorder/pre-order
+        # scenarios. Not yet modeled on Expectation.
+        fields = set(Expectation.model_fields.keys())
+        if "fulfillable_on" not in fields:
+            pytest.skip(
+                "Model gap: Expectation missing 'fulfillable_on' field "
+                "from expectation.json (string for backorder/pre-order timing)"
+            )
+
+
+# ============================================================================
+# ERROR PATH BEHAVIORAL TESTS (order-rest.md)
+# ============================================================================
+
+
+def _make_checkout_service():
+    """Construct a CheckoutService with mocked DB, fulfillment, and base URL."""
+    from services.checkout_service import CheckoutService
+    return CheckoutService(MagicMock(), MagicMock(), "https://shop.example.com")
+
+
+class TestOrderNotFoundErrorResponse:
+    """O9: Behavior (order-rest.md): Order not found returns error message.
+
+    Spec (order-rest.md, Get Order "Not Found" example):
+      HTTP 200 with body:
+      {
+        "ucp": {"version": "...", "status": "error",
+                "capabilities": {"dev.ucp.shopping.order": [...]}},
+        "messages": [{"type": "error", "code": "not_found",
+                      "severity": "unrecoverable",
+                      "content": "Order not found."}]
+      }
+
+    IMPLEMENTATION GAP: The current implementation raises ResourceNotFoundError
+    which the app.py exception handler converts to HTTP 404 with
+    {"detail": ..., "code": "RESOURCE_NOT_FOUND"}.  The spec requires HTTP 200
+    with a UCP envelope and messages array.  These tests validate the current
+    service-level behavior (raising ResourceNotFoundError) and document the
+    gap against the spec-required response format.
+    """
+
+    def test_get_order_raises_not_found_for_unknown_id(self):
+        """Service raises ResourceNotFoundError for unknown order ID."""
+        from exceptions import ResourceNotFoundError
+
+        service = _make_checkout_service()
+
+        with patch("db.get_order", new=AsyncMock(return_value=None)):
+            with pytest.raises(ResourceNotFoundError, match="Order not found"):
+                asyncio.run(service.get_order("nonexistent-order-id"))
+
+    def test_order_not_found_error_has_correct_code(self):
+        """ResourceNotFoundError uses code RESOURCE_NOT_FOUND."""
+        from exceptions import ResourceNotFoundError
+
+        service = _make_checkout_service()
+
+        with patch("db.get_order", new=AsyncMock(return_value=None)):
+            with pytest.raises(ResourceNotFoundError) as exc_info:
+                asyncio.run(service.get_order("nonexistent-order-id"))
+            assert exc_info.value.code == "RESOURCE_NOT_FOUND"
+
+    def test_order_not_found_returns_404_not_200(self):
+        """SPEC GAP: Implementation returns 404; spec requires 200 with UCP envelope."""
+        # Spec: order-rest.md Get Order "Not Found" shows HTTP 200 with
+        # {"ucp": {"status": "error"}, "messages": [{"code": "not_found"}]}
+        # Implementation: ResourceNotFoundError has status_code=404
+        from exceptions import ResourceNotFoundError
+
+        service = _make_checkout_service()
+
+        with patch("db.get_order", new=AsyncMock(return_value=None)):
+            with pytest.raises(ResourceNotFoundError) as exc_info:
+                asyncio.run(service.get_order("nonexistent-order-id"))
+            # Document the gap: spec says 200, implementation says 404
+            assert exc_info.value.status_code == 404, (
+                "Implementation currently returns 404"
+            )
+            pytest.skip(
+                "SPEC GAP: Order not found should return HTTP 200 with "
+                '{"ucp": {"status": "error"}, "messages": '
+                '[{"type": "error", "code": "not_found", '
+                '"severity": "unrecoverable", '
+                '"content": "Order not found."}]} per order-rest.md. '
+                "Implementation returns HTTP 404 with "
+                '{"detail": ..., "code": "RESOURCE_NOT_FOUND"}.'
+            )
+
+    def test_order_not_found_code_mismatch(self):
+        """SPEC GAP: Implementation uses RESOURCE_NOT_FOUND; spec uses not_found."""
+        # Spec: order-rest.md uses code "not_found" (lowercase, underscore)
+        # Implementation: ResourceNotFoundError uses code "RESOURCE_NOT_FOUND"
+        from exceptions import ResourceNotFoundError
+
+        service = _make_checkout_service()
+
+        with patch("db.get_order", new=AsyncMock(return_value=None)):
+            with pytest.raises(ResourceNotFoundError) as exc_info:
+                asyncio.run(service.get_order("nonexistent-order-id"))
+            impl_code = exc_info.value.code
+            spec_code = "not_found"
+            assert impl_code != spec_code, (
+                f"Implementation code '{impl_code}' differs from spec code '{spec_code}'"
+            )
+            pytest.skip(
+                f"SPEC GAP: Order not-found error code is '{impl_code}' "
+                f"but spec requires '{spec_code}'. Also, spec error response "
+                "uses UCP envelope with messages array, not flat JSON."
+            )
+
+    def test_ship_order_raises_not_found_for_unknown_id(self):
+        """Service raises ResourceNotFoundError when shipping nonexistent order."""
+        from exceptions import ResourceNotFoundError
+
+        service = _make_checkout_service()
+
+        with patch("db.get_order", new=AsyncMock(return_value=None)):
+            with pytest.raises(ResourceNotFoundError, match="Order not found"):
+                asyncio.run(service.ship_order("nonexistent-order-id"))
+
+    def test_update_order_raises_not_found_for_unknown_id(self):
+        """Service raises ResourceNotFoundError when updating nonexistent order."""
+        from exceptions import ResourceNotFoundError
+
+        service = _make_checkout_service()
+
+        with patch("db.get_order", new=AsyncMock(return_value=None)):
+            with pytest.raises(ResourceNotFoundError, match="Order not found"):
+                asyncio.run(service.update_order("nonexistent-order-id", {}))

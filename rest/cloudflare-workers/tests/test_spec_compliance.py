@@ -91,7 +91,7 @@ class TestCapabilitiesStructure:
             version="2026-04-08",
             capabilities={"dev.ucp.shopping.checkout": [{"version": "2026-04-08"}]},
         )
-        data = ucp.model_dump(mode="json")
+        data = ucp.model_dump(mode="json", exclude_none=True)
         assert isinstance(data["capabilities"], dict)
 
     def test_cart_capabilities_is_dict(self):
@@ -99,7 +99,7 @@ class TestCapabilitiesStructure:
             version="2026-04-08",
             capabilities={"dev.ucp.shopping.cart": [{"version": "2026-04-08"}]},
         )
-        data = ucp.model_dump(mode="json")
+        data = ucp.model_dump(mode="json", exclude_none=True)
         assert isinstance(data["capabilities"], dict)
 
     def test_order_capabilities_is_dict(self):
@@ -107,14 +107,14 @@ class TestCapabilitiesStructure:
             version="2026-04-08",
             capabilities={"dev.ucp.shopping.order": [{"version": "2026-04-08"}]},
         )
-        data = ucp.model_dump(mode="json")
+        data = ucp.model_dump(mode="json", exclude_none=True)
         assert isinstance(data["capabilities"], dict)
 
     def test_catalog_capabilities_is_dict(self):
         ucp = CatalogUcp(
             capabilities={"dev.ucp.shopping.catalog.search": [{"version": "2026-04-08"}]},
         )
-        data = ucp.model_dump(mode="json")
+        data = ucp.model_dump(mode="json", exclude_none=True)
         assert isinstance(data["capabilities"], dict)
 
     def test_capability_keys_are_reverse_domain(self):
@@ -166,9 +166,9 @@ class TestPaymentHandlersStructure:
                 "dev.shopify.shop_pay": [{"id": "shop_pay", "version": "2026-04-08"}],
             },
         )
-        data = ucp.model_dump(mode="json")
-        assert "payment_handlers" in data
-        assert isinstance(data["payment_handlers"], dict)
+        data = ucp.model_dump(mode="json", exclude_none=True)
+        assert "payment_handlers" in data, "Checkout UCP must include payment_handlers"
+        assert isinstance(data["payment_handlers"], dict), "payment_handlers must be a dict"
 
     def test_payment_handler_keys_are_reverse_domain(self):
         ucp = ResponseCheckout(
@@ -212,14 +212,18 @@ class TestPaymentHandlersStructure:
     def test_order_ucp_does_not_require_payment_handlers(self):
         """Spec: response_order_schema does NOT require payment_handlers."""
         ucp = ResponseOrder(version="2026-04-08")
-        data = ucp.model_dump(mode="json")
-        assert "payment_handlers" not in data or data.get("payment_handlers") is None
+        data = ucp.model_dump(mode="json", exclude_none=True)
+        assert "payment_handlers" not in data, (
+            "Order UCP should not include payment_handlers"
+        )
 
     def test_cart_ucp_does_not_require_payment_handlers(self):
         """Spec: response_cart_schema does NOT require payment_handlers."""
         ucp = ResponseCart(version="2026-04-08")
-        data = ucp.model_dump(mode="json")
-        assert "payment_handlers" not in data or data.get("payment_handlers") is None
+        data = ucp.model_dump(mode="json", exclude_none=True)
+        assert "payment_handlers" not in data, (
+            "Cart UCP should not include payment_handlers"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -335,34 +339,40 @@ class TestFullResponseShape:
 # ---------------------------------------------------------------------------
 
 
+def _build_test_profile():
+    """Construct a discovery profile for testing."""
+    from routes.discovery import _build_profile
+    return _build_profile("https://example.com/")
+
+
 class TestDiscoveryProfile:
     """X4: Discovery profile services + overall structure."""
 
-    @pytest.fixture()
-    def profile(self):
-        from routes.discovery import _build_profile
-        return _build_profile("https://example.com/")
+    def test_top_level_has_ucp(self):
+        profile = _build_test_profile()
+        assert "ucp" in profile, "Discovery profile must have 'ucp' key"
 
-    def test_top_level_has_ucp(self, profile):
-        assert "ucp" in profile
-
-    def test_no_payment_key_outside_ucp(self, profile):
+    def test_no_payment_key_outside_ucp(self):
         """X3 regression: payment must not exist as a top-level key."""
-        assert "payment" not in profile
+        profile = _build_test_profile()
+        assert "payment" not in profile, "payment must be inside ucp, not top-level"
 
     # --- services ---
 
-    def test_services_is_keyed_object(self, profile):
+    def test_services_is_keyed_object(self):
+        profile = _build_test_profile()
         services = profile["ucp"]["services"]
         assert isinstance(services, dict)
 
-    def test_service_value_is_array(self, profile):
+    def test_service_value_is_array(self):
+        profile = _build_test_profile()
         services = profile["ucp"]["services"]
         for key, val in services.items():
             assert isinstance(val, list), f"services['{key}'] should be an array"
             assert len(val) > 0
 
-    def test_service_binding_has_transport(self, profile):
+    def test_service_binding_has_transport(self):
+        profile = _build_test_profile()
         services = profile["ucp"]["services"]
         for key, bindings in services.items():
             for binding in bindings:
@@ -371,7 +381,8 @@ class TestDiscoveryProfile:
                 )
                 assert binding["transport"] in ("rest", "mcp", "a2a", "embedded")
 
-    def test_service_binding_has_endpoint(self, profile):
+    def test_service_binding_has_endpoint(self):
+        profile = _build_test_profile()
         services = profile["ucp"]["services"]
         for key, bindings in services.items():
             for binding in bindings:
@@ -380,15 +391,17 @@ class TestDiscoveryProfile:
                         f"REST service '{key}' must have 'endpoint'"
                     )
 
-    def test_service_binding_has_version(self, profile):
+    def test_service_binding_has_version(self):
+        profile = _build_test_profile()
         services = profile["ucp"]["services"]
         for key, bindings in services.items():
             for binding in bindings:
-                assert "version" in binding
+                assert "version" in binding, f"services['{key}'] binding missing 'version'"
                 assert VERSION_PATTERN.match(binding["version"])
 
-    def test_service_schema_and_endpoint_not_nested(self, profile):
+    def test_service_schema_and_endpoint_not_nested(self):
         """Regression: schema and endpoint must be top-level, not under 'rest'."""
+        profile = _build_test_profile()
         services = profile["ucp"]["services"]
         for key, bindings in services.items():
             for binding in bindings:
@@ -399,11 +412,13 @@ class TestDiscoveryProfile:
 
     # --- capabilities ---
 
-    def test_capabilities_is_keyed_object(self, profile):
+    def test_capabilities_is_keyed_object(self):
+        profile = _build_test_profile()
         caps = profile["ucp"]["capabilities"]
         assert isinstance(caps, dict)
 
-    def test_expected_capabilities_present(self, profile):
+    def test_expected_capabilities_present(self):
+        profile = _build_test_profile()
         caps = profile["ucp"]["capabilities"]
         expected = [
             "dev.ucp.shopping.checkout",
@@ -420,12 +435,14 @@ class TestDiscoveryProfile:
 
     # --- payment_handlers ---
 
-    def test_payment_handlers_inside_ucp(self, profile):
-        assert "payment_handlers" in profile["ucp"]
+    def test_payment_handlers_inside_ucp(self):
+        profile = _build_test_profile()
+        assert "payment_handlers" in profile["ucp"], "Discovery profile must have payment_handlers"
         ph = profile["ucp"]["payment_handlers"]
         assert isinstance(ph, dict)
 
-    def test_payment_handler_entries_have_id_and_version(self, profile):
+    def test_payment_handler_entries_have_id_and_version(self):
+        profile = _build_test_profile()
         ph = profile["ucp"]["payment_handlers"]
         for key, entries in ph.items():
             assert isinstance(entries, list)
@@ -435,7 +452,8 @@ class TestDiscoveryProfile:
 
     # --- version ---
 
-    def test_profile_version_format(self, profile):
+    def test_profile_version_format(self):
+        profile = _build_test_profile()
         assert VERSION_PATTERN.match(profile["ucp"]["version"])
 
 
@@ -1012,7 +1030,12 @@ class TestCartToCheckoutConversion:
 
 
 class TestDiscountAmounts:
-    """CK3/F1/F2/F3: Discount calculation compliance."""
+    """Implementation: Discount calculation behavior.
+
+    Discount sign convention and amount tests are covered by D9 in
+    test_totals_discount_spec.py.  These remaining tests validate unique
+    implementation behavior of CheckoutService._recalculate_totals.
+    """
 
     def _make_service_with_mocks(self):
         from unittest.mock import AsyncMock, MagicMock
@@ -1021,84 +1044,13 @@ class TestDiscountAmounts:
         service = CheckoutService(MagicMock(), MagicMock(), "https://shop.example.com")
         return service
 
-    def test_discount_total_is_negative(self):
-        """CK3/F1: TotalResponse with type='discount' must have negative amount."""
-        import asyncio
-        from unittest.mock import AsyncMock, MagicMock, patch
-        from models import Checkout, ResponseCheckout, PaymentResponse, DiscountsObject, LineItemResponse, ItemResponse, TotalResponse
-
-        service = self._make_service_with_mocks()
-
-        checkout = Checkout(
-            ucp=ResponseCheckout(version="2026-04-08"),
-            id="ck-1",
-            currency="USD",
-            line_items=[
-                LineItemResponse(id="li-1", item=ItemResponse(id="prod-1", title="Rose", price=1000), quantity=2, totals=[]),
-            ],
-            totals=[],
-            payment=PaymentResponse(instruments=[]),
-            discounts=DiscountsObject(codes=["SAVE10"]),
-        )
-
-        mock_discount = MagicMock()
-        mock_discount.code = "SAVE10"
-        mock_discount.type = "fixed_amount"
-        mock_discount.value = 500
-        mock_discount.description = "$5 off"
-
-        with patch("db.get_product", new=AsyncMock(return_value=MagicMock(price=1000, title="Rose"))), \
-             patch("db.get_active_promotions", new=AsyncMock(return_value=[])), \
-             patch("db.get_discounts_by_codes", new=AsyncMock(return_value=[mock_discount])):
-
-            asyncio.run(service._recalculate_totals(checkout))
-
-        discount_totals = [t for t in checkout.totals if t.type == "discount"]
-        assert len(discount_totals) == 1
-        assert discount_totals[0].amount < 0, \
-            f"Discount total must be negative, got {discount_totals[0].amount}"
-        assert discount_totals[0].amount == -500
-
-    def test_applied_discount_amount_is_negative(self):
-        """CK3/F1: AppliedDiscount.amount must be negative."""
-        import asyncio
-        from unittest.mock import AsyncMock, MagicMock, patch
-        from models import Checkout, ResponseCheckout, PaymentResponse, DiscountsObject, LineItemResponse, ItemResponse, TotalResponse
-
-        service = self._make_service_with_mocks()
-
-        checkout = Checkout(
-            ucp=ResponseCheckout(version="2026-04-08"),
-            id="ck-1",
-            currency="USD",
-            line_items=[
-                LineItemResponse(id="li-1", item=ItemResponse(id="prod-1", title="Rose", price=1000), quantity=1, totals=[]),
-            ],
-            totals=[],
-            payment=PaymentResponse(instruments=[]),
-            discounts=DiscountsObject(codes=["HALF"]),
-        )
-
-        mock_discount = MagicMock()
-        mock_discount.code = "HALF"
-        mock_discount.type = "percentage"
-        mock_discount.value = 50
-        mock_discount.description = "50% off"
-
-        with patch("db.get_product", new=AsyncMock(return_value=MagicMock(price=2000, title="Rose"))), \
-             patch("db.get_active_promotions", new=AsyncMock(return_value=[])), \
-             patch("db.get_discounts_by_codes", new=AsyncMock(return_value=[mock_discount])):
-
-            asyncio.run(service._recalculate_totals(checkout))
-
-        assert checkout.discounts.applied is not None
-        assert len(checkout.discounts.applied) == 1
-        assert checkout.discounts.applied[0].amount < 0, \
-            f"AppliedDiscount.amount must be negative, got {checkout.discounts.applied[0].amount}"
-        assert checkout.discounts.applied[0].amount == -1000
+    ## test_discount_total_is_negative removed: covered by D9 in test_totals_discount_spec.py
+    ## test_applied_discount_amount_is_negative removed: covered by D9 in test_totals_discount_spec.py
 
     def test_percentage_discount_uses_subtotal_not_grand_total(self):
-        """F2: Percentage discounts base is line item subtotal, not grand_total with fulfillment."""
+        """Implementation: Percentage discount base is line item subtotal,
+        not grand total with fulfillment.  This validates the service logic.
+        """
         import asyncio
         from unittest.mock import AsyncMock, MagicMock, patch
         from models import (
@@ -1159,7 +1111,7 @@ class TestDiscountAmounts:
             f"10% of subtotal $20 should be -200, got {discount_totals[0].amount}"
 
     def test_applied_list_resets_on_recalculation(self):
-        """F3: Calling _recalculate_totals twice must not double discounts."""
+        """Implementation: Calling _recalculate_totals twice must not double discounts."""
         import asyncio
         from unittest.mock import AsyncMock, MagicMock, patch
         from models import Checkout, ResponseCheckout, PaymentResponse, DiscountsObject, LineItemResponse, ItemResponse, TotalResponse, AppliedDiscount
@@ -1286,7 +1238,10 @@ class TestProductDetailOptionSelection:
         assert data["preferences"] == ["Color", "Size"]
 
     def test_variant_matching_algorithm(self):
-        """Test the variant matching with relaxation."""
+        """Implementation: _find_best_variant relaxation algorithm.
+        The spec defines the response shape (selected, options with available/exists)
+        but not the matching algorithm.  This tests our implementation's approach.
+        """
         from routes.catalog import _find_best_variant, SelectedOption
 
         variants = [
@@ -1312,7 +1267,10 @@ class TestProductDetailOptionSelection:
         assert result["id"] == "v3"
 
     def test_availability_signal_computation(self):
-        """Test exists/available computation for option values."""
+        """Implementation: _variant_exists_with / _variant_available_with helpers.
+        The spec defines the exists/available boolean shape on option values
+        but not the computation logic.  This tests our implementation.
+        """
         from routes.catalog import _variant_exists_with, _variant_available_with, SelectedOption
 
         variants = [
@@ -1385,6 +1343,9 @@ class TestPickupFulfillment:
         assert data["description"] == "Available for in-store pickup"
 
     def test_pickup_options_are_free(self):
+        """Implementation: this demo sets pickup cost to zero.
+        The spec does NOT require pickup to be free -- cost is merchant-determined.
+        """
         from services.fulfillment_service import FulfillmentService
         svc = FulfillmentService()
         options = svc.calculate_pickup_options()

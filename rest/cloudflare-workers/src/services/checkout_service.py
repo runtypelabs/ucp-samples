@@ -210,9 +210,9 @@ class CheckoutService:
       line_items=line_items,
       totals=[],
       links=[
-        CheckoutLink(rel="privacy_policy", href=f"{self.base_url}/policies/privacy", title="Privacy Policy"),
-        CheckoutLink(rel="terms_of_service", href=f"{self.base_url}/policies/terms", title="Terms of Service"),
-        CheckoutLink(rel="refund_policy", href=f"{self.base_url}/policies/refunds", title="Refund Policy"),
+        CheckoutLink(type="privacy_policy", url=f"{self.base_url}/policies/privacy", title="Privacy Policy"),
+        CheckoutLink(type="terms_of_service", url=f"{self.base_url}/policies/terms", title="Terms of Service"),
+        CheckoutLink(type="refund_policy", url=f"{self.base_url}/policies/refunds", title="Refund Policy"),
       ],
       payment=PaymentResponse(
         instruments=checkout_req.payment.instruments if checkout_req.payment else [],

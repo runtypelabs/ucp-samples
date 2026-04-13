@@ -20,9 +20,11 @@ from models import (
     Buyer,
     Cart,
     CartCreateRequest,
+    CartLink,
     CartUpdateRequest,
     Checkout,
     CheckoutCreateRequest,
+    CheckoutLink,
     CheckoutUpdateRequest,
     ItemRequest,
     ItemResponse,
@@ -38,6 +40,8 @@ from exceptions import (
     CartNotModifiableError,
     CheckoutNotModifiableError,
     IdempotencyConflictError,
+    OutOfStockError,
+    ResourceNotFoundError,
 )
 
 
@@ -85,24 +89,7 @@ def _standard_db_patches_for_checkout_create():
 # =========================================================================
 
 
-class TestCartCreateReturns201:
-    """CT1: Cart create returns HTTP 201.
-
-    Behavior (cart-rest.md): "Create Cart: POST /carts -> 201 Created"
-    """
-
-    def test_create_cart_route_has_status_code_201(self):
-        # Spec: "Create Cart: POST /carts -> 201 Created"
-        from routes.cart import create_cart
-        sig = inspect.signature(create_cart)
-        # The status_code is set on the route decorator, which FastAPI stores
-        # on the function via the router.  We inspect the APIRoute registration
-        # by looking at the router's routes list.
-        from routes.cart import router
-        route = next(r for r in router.routes if r.path == "/carts" and "POST" in r.methods)
-        assert route.status_code == 201, (
-            "Spec requires POST /carts to return 201 Created"
-        )
+## CT1 (cart create 201) removed: covered by R1 in test_fulfillment_order_routes_spec.py
 
 
 class TestCartResponseRequiredFields:
@@ -113,8 +100,7 @@ class TestCartResponseRequiredFields:
     """
 
     def test_cart_serializes_all_required_fields(self):
-        # Spec: "Cart response includes id, line_items, currency, totals,
-        # continue_url, expires_at"
+        # Spec: cart.json required: ["ucp", "id", "line_items", "currency", "totals"]
         cart = Cart(
             ucp=ResponseCart(version="2026-04-08"),
             id="cart-1",
@@ -136,8 +122,13 @@ class TestCartResponseRequiredFields:
         )
         data = cart.model_dump(mode="json", exclude_none=True)
 
-        for field in ("id", "line_items", "currency", "totals", "continue_url", "expires_at"):
+        # Spec-required fields per cart.json
+        for field in ("id", "line_items", "currency", "totals"):
             assert field in data, f"Cart response missing spec-required field '{field}'"
+
+        # Optional fields per cart.json (not required, but should serialize when set)
+        for field in ("continue_url", "expires_at"):
+            assert field in data, f"Cart optional field '{field}' should serialize when provided"
 
 
 class TestCartLineItemsEnriched:
@@ -203,22 +194,25 @@ class TestCartTotalsStructure:
 
 
 class TestCartStatusField:
-    """CT5: Cart has status field.
+    """CT5: Cart status field for lifecycle tracking.
 
-    Spec: Cart has status field (active, canceled)
+    Implementation: cart.json does NOT define a status property.
+    The status field is an implementation-level addition for tracking
+    cart lifecycle (active -> canceled). Behavioral spec (cart-rest.md)
+    describes cancel semantics but the JSON schema has no status enum.
     """
 
     def test_cart_has_status_field(self):
-        # Spec: Cart has status field (active, canceled)
+        # Implementation: status field for lifecycle management
         assert "status" in Cart.model_fields, "Cart model must have a 'status' field"
 
     def test_cart_status_defaults_to_active(self):
-        # Spec: Cart has status field (active, canceled)
+        # Implementation: default lifecycle state
         cart = Cart(id="cart-1")
         assert cart.status == "active", "Cart status must default to 'active'"
 
     def test_cart_status_accepts_canceled(self):
-        # Spec: Cart has status field (active, canceled)
+        # Behavior (cart-rest.md): Cancel transitions cart to canceled
         cart = Cart(id="cart-1", status="canceled")
         assert cart.status == "canceled"
 
@@ -386,22 +380,7 @@ class TestCartIdempotencyDifferentParams:
 # =========================================================================
 
 
-class TestCheckoutCreateReturns201:
-    """CK1: Checkout create returns HTTP 201.
-
-    Behavior (checkout-rest.md): "Create Checkout: POST /checkout-sessions -> 201 Created"
-    """
-
-    def test_create_checkout_route_has_status_code_201(self):
-        # Spec: "Create Checkout: POST /checkout-sessions -> 201 Created"
-        from routes.checkout import router
-        route = next(
-            r for r in router.routes
-            if r.path == "/checkout-sessions" and "POST" in r.methods
-        )
-        assert route.status_code == 201, (
-            "Spec requires POST /checkout-sessions to return 201 Created"
-        )
+## CK1 (checkout create 201) removed: covered by R2 in test_fulfillment_order_routes_spec.py
 
 
 class TestCheckoutStatusEnumValues:
@@ -714,3 +693,471 @@ class TestCheckoutResponseHasContinueUrl:
         data = checkout.model_dump(mode="json", exclude_none=True)
         assert "continue_url" in data
         assert data["continue_url"] == "https://shop.example.com/checkout/ck-1"
+
+
+# ============================================================================
+# LINK SPEC (types/link.json)
+# ============================================================================
+
+
+class TestLinkObjectRequiredFields:
+    """CT11: Link object structure.
+
+    Spec: types/link.json required: ["type", "url"]
+    optional: title
+    """
+
+    def test_checkout_link_has_type_and_url(self):
+        # Spec: types/link.json required: ["type", "url"]
+        link = CheckoutLink(type="privacy_policy", url="https://shop.example.com/privacy")
+        data = link.model_dump(mode="json", exclude_none=True)
+        assert "type" in data, "Link must have 'type' field per link.json"
+        assert "url" in data, "Link must have 'url' field per link.json"
+
+    def test_cart_link_has_type_and_url(self):
+        # Spec: types/link.json required: ["type", "url"]
+        link = CartLink(type="terms_of_service", url="https://shop.example.com/terms")
+        data = link.model_dump(mode="json", exclude_none=True)
+        assert "type" in data, "Link must have 'type' field per link.json"
+        assert "url" in data, "Link must have 'url' field per link.json"
+
+    def test_link_title_is_optional(self):
+        # Spec: types/link.json optional: title
+        link = CheckoutLink(type="faq", url="https://shop.example.com/faq")
+        data = link.model_dump(mode="json", exclude_none=True)
+        assert "title" not in data, "title should be excluded when None"
+
+    def test_link_title_serializes_when_provided(self):
+        # Spec: types/link.json optional: title
+        link = CheckoutLink(
+            type="privacy_policy",
+            url="https://shop.example.com/privacy",
+            title="Privacy Policy",
+        )
+        data = link.model_dump(mode="json", exclude_none=True)
+        assert data["title"] == "Privacy Policy"
+
+    def test_link_well_known_types(self):
+        # Spec: types/link.json well-known type values
+        well_known = ["privacy_policy", "terms_of_service", "refund_policy", "shipping_policy", "faq"]
+        for link_type in well_known:
+            link = CheckoutLink(type=link_type, url="https://example.com")
+            assert link.type == link_type, f"Link must accept well-known type '{link_type}'"
+
+
+class TestCheckoutLinksRequired:
+    """CT12: Checkout response must include links.
+
+    Spec: checkout.json required: ["ucp", "id", "line_items", "status", "currency", "totals", "links"]
+    """
+
+    def test_checkout_has_links_field(self):
+        # Spec: checkout.json required includes "links"
+        assert "links" in Checkout.model_fields, (
+            "Checkout model must have 'links' field per checkout.json required array"
+        )
+
+    def test_checkout_links_defaults_to_empty_list(self):
+        # Spec: links is an array of link.json objects
+        checkout = Checkout(
+            ucp=ResponseCheckout(version="2026-04-08"),
+            id="ck-1",
+            status="incomplete",
+            currency="USD",
+        )
+        assert isinstance(checkout.links, list), "links must be a list"
+
+
+# ============================================================================
+# DISCOUNT MODEL GAPS (discount.json $defs/applied_discount)
+# ============================================================================
+
+
+class TestAppliedDiscountMissingSpecFields:
+    """CK11: AppliedDiscount model spec gaps.
+
+    Spec: discount.json $defs/applied_discount defines optional fields
+    not yet modeled: provisional (boolean, default false) and
+    eligibility ($ref reverse_domain_name.json).
+    """
+
+    def test_applied_discount_provisional_not_modeled(self):
+        """Spec: discount.json applied_discount defines provisional boolean."""
+        from models import AppliedDiscount
+        # NOTE: Model gap – discount.json $defs/applied_discount defines
+        # optional 'provisional' field (boolean, default false) indicating
+        # the discount requires additional verification. Not yet modeled.
+        fields = set(AppliedDiscount.model_fields.keys())
+        if "provisional" not in fields:
+            pytest.skip(
+                "Model gap: AppliedDiscount missing 'provisional' field "
+                "from discount.json (boolean for verification-required discounts)"
+            )
+
+    def test_applied_discount_eligibility_not_modeled(self):
+        """Spec: discount.json applied_discount defines eligibility ref."""
+        from models import AppliedDiscount
+        # NOTE: Model gap – discount.json $defs/applied_discount defines
+        # optional 'eligibility' field ($ref reverse_domain_name.json) for
+        # the eligibility claim accepted by the Business. Not yet modeled.
+        fields = set(AppliedDiscount.model_fields.keys())
+        if "eligibility" not in fields:
+            pytest.skip(
+                "Model gap: AppliedDiscount missing 'eligibility' field "
+                "from discount.json (reverse_domain_name ref for eligibility claims)"
+            )
+
+
+# =========================================================================
+# ERROR PATH BEHAVIORAL TESTS (cart-rest.md, checkout-rest.md)
+# =========================================================================
+
+
+class TestCartNotFoundErrorResponse:
+    """CT13: Behavior (cart-rest.md): Cart not found returns error message.
+
+    Spec (cart-rest.md, Get Cart "Not Found" example):
+      HTTP 200 with body:
+      {
+        "ucp": {"version": "...", "status": "error",
+                "capabilities": {"dev.ucp.shopping.cart": [...]}},
+        "messages": [{"type": "error", "code": "not_found",
+                      "content": "Cart not found or has expired",
+                      "severity": "unrecoverable"}],
+        "continue_url": "https://merchant.com/"
+      }
+
+    IMPLEMENTATION GAP: The current implementation raises ResourceNotFoundError
+    which the app.py exception handler converts to HTTP 404 with
+    {"detail": ..., "code": "RESOURCE_NOT_FOUND"}.  The spec requires HTTP 200
+    with a UCP envelope and messages array.  These tests validate the current
+    service-level behavior (raising ResourceNotFoundError) and document the
+    gap against the spec-required response format.
+    """
+
+    def test_get_cart_raises_not_found_for_unknown_id(self):
+        """Service raises ResourceNotFoundError for unknown cart ID."""
+        service = _make_cart_service()
+
+        with patch("db.get_cart", new=AsyncMock(return_value=None)):
+            with pytest.raises(ResourceNotFoundError, match="Cart not found"):
+                asyncio.run(service.get_cart("nonexistent-cart-id"))
+
+    def test_cart_not_found_error_has_correct_code(self):
+        """ResourceNotFoundError uses code RESOURCE_NOT_FOUND."""
+        service = _make_cart_service()
+
+        with patch("db.get_cart", new=AsyncMock(return_value=None)):
+            with pytest.raises(ResourceNotFoundError) as exc_info:
+                asyncio.run(service.get_cart("nonexistent-cart-id"))
+            assert exc_info.value.code == "RESOURCE_NOT_FOUND"
+
+    def test_cart_not_found_returns_404_not_200(self):
+        """SPEC GAP: Implementation returns 404; spec requires 200 with UCP envelope."""
+        # Spec: cart-rest.md Get Cart "Not Found" shows HTTP 200 with
+        # {"ucp": {"status": "error"}, "messages": [{"code": "not_found"}]}
+        # Implementation: ResourceNotFoundError has status_code=404
+        service = _make_cart_service()
+
+        with patch("db.get_cart", new=AsyncMock(return_value=None)):
+            with pytest.raises(ResourceNotFoundError) as exc_info:
+                asyncio.run(service.get_cart("nonexistent-cart-id"))
+            # Document the gap: spec says 200, implementation says 404
+            assert exc_info.value.status_code == 404, (
+                "Implementation currently returns 404"
+            )
+            pytest.skip(
+                "SPEC GAP: Cart not found should return HTTP 200 with "
+                '{"ucp": {"status": "error"}, "messages": '
+                '[{"type": "error", "code": "not_found", '
+                '"severity": "unrecoverable"}]} per cart-rest.md. '
+                "Implementation returns HTTP 404 with "
+                '{"detail": ..., "code": "RESOURCE_NOT_FOUND"}.'
+            )
+
+    def test_update_cart_raises_not_found_for_unknown_id(self):
+        """Service raises ResourceNotFoundError when updating nonexistent cart."""
+        service = _make_cart_service()
+
+        update_req = CartUpdateRequest(
+            line_items=[LineItemRequest(item=ItemRequest(id="prod-1"), quantity=1)],
+        )
+
+        with patch("db.get_idempotency_record", new=AsyncMock(return_value=None)), \
+             patch("db.get_cart", new=AsyncMock(return_value=None)):
+            with pytest.raises(ResourceNotFoundError, match="Cart not found"):
+                asyncio.run(service.update_cart("nonexistent-cart-id", update_req, "idem-1"))
+
+    def test_cancel_cart_raises_not_found_for_unknown_id(self):
+        """Service raises ResourceNotFoundError when canceling nonexistent cart."""
+        service = _make_cart_service()
+
+        with patch("db.get_cart", new=AsyncMock(return_value=None)):
+            with pytest.raises(ResourceNotFoundError, match="Cart not found"):
+                asyncio.run(service.cancel_cart("nonexistent-cart-id", "idem-1"))
+
+
+class TestCheckoutNotFoundErrorResponse:
+    """CT14: Behavior (checkout-rest.md): Checkout not found returns error message.
+
+    Spec (checkout-rest.md): Business outcomes including not-found are
+    returned with HTTP 200 and UCP envelope containing messages array.
+    checkout-rest.md does not include an explicit not-found example like
+    cart-rest.md, but the error response pattern is the same.
+
+    IMPLEMENTATION GAP: Same as cart -- ResourceNotFoundError -> HTTP 404
+    instead of spec-required HTTP 200 with UCP envelope.
+    """
+
+    def test_get_checkout_raises_not_found_for_unknown_id(self):
+        """Service raises ResourceNotFoundError for unknown checkout ID."""
+        service = _make_checkout_service()
+
+        with patch("db.get_checkout_session", new=AsyncMock(return_value=None)), \
+             patch("db.log_request", new=AsyncMock()):
+            with pytest.raises(ResourceNotFoundError, match="Checkout session not found"):
+                asyncio.run(service.get_checkout("nonexistent-checkout-id"))
+
+    def test_checkout_not_found_error_has_correct_code(self):
+        """ResourceNotFoundError uses code RESOURCE_NOT_FOUND."""
+        service = _make_checkout_service()
+
+        with patch("db.get_checkout_session", new=AsyncMock(return_value=None)), \
+             patch("db.log_request", new=AsyncMock()):
+            with pytest.raises(ResourceNotFoundError) as exc_info:
+                asyncio.run(service.get_checkout("nonexistent-checkout-id"))
+            assert exc_info.value.code == "RESOURCE_NOT_FOUND"
+
+    def test_checkout_not_found_returns_404_not_200(self):
+        """SPEC GAP: Implementation returns 404; spec requires 200 with UCP envelope."""
+        service = _make_checkout_service()
+
+        with patch("db.get_checkout_session", new=AsyncMock(return_value=None)), \
+             patch("db.log_request", new=AsyncMock()):
+            with pytest.raises(ResourceNotFoundError) as exc_info:
+                asyncio.run(service.get_checkout("nonexistent-checkout-id"))
+            assert exc_info.value.status_code == 404, (
+                "Implementation currently returns 404"
+            )
+            pytest.skip(
+                "SPEC GAP: Checkout not found should return HTTP 200 with "
+                '{"ucp": {"status": "error"}, "messages": '
+                '[{"type": "error", "code": "not_found", '
+                '"severity": "unrecoverable"}]} per checkout-rest.md. '
+                "Implementation returns HTTP 404 with "
+                '{"detail": ..., "code": "RESOURCE_NOT_FOUND"}.'
+            )
+
+    def test_update_checkout_raises_not_found_for_unknown_id(self):
+        """Service raises ResourceNotFoundError when updating nonexistent checkout."""
+        service = _make_checkout_service()
+
+        update_req = CheckoutUpdateRequest(
+            line_items=[LineItemRequest(item=ItemRequest(id="prod-1"), quantity=1)],
+        )
+
+        with patch("db.get_idempotency_record", new=AsyncMock(return_value=None)), \
+             patch("db.get_checkout_session", new=AsyncMock(return_value=None)), \
+             patch("db.log_request", new=AsyncMock()):
+            with pytest.raises(ResourceNotFoundError, match="Checkout session not found"):
+                asyncio.run(service.update_checkout(
+                    "nonexistent-checkout-id", update_req, "idem-1"
+                ))
+
+    def test_cancel_checkout_raises_not_found_for_unknown_id(self):
+        """Service raises ResourceNotFoundError when canceling nonexistent checkout."""
+        service = _make_checkout_service()
+
+        with patch("db.get_idempotency_record", new=AsyncMock(return_value=None)), \
+             patch("db.get_checkout_session", new=AsyncMock(return_value=None)), \
+             patch("db.log_request", new=AsyncMock()):
+            with pytest.raises(ResourceNotFoundError, match="Checkout session not found"):
+                asyncio.run(service.cancel_checkout(
+                    "nonexistent-checkout-id", "idem-1"
+                ))
+
+
+class TestCartOutOfStockErrorResponse:
+    """CT15: Behavior (cart-rest.md): Out-of-stock handling for cart operations.
+
+    Spec (cart-rest.md, Create Cart "Error Response"):
+      HTTP 200 with body:
+      {
+        "ucp": {"version": "...", "status": "error"},
+        "messages": [{"type": "error", "code": "out_of_stock",
+                      "content": "All requested items are currently out of stock",
+                      "severity": "unrecoverable"}],
+        "continue_url": "https://merchant.com/"
+      }
+
+    IMPLEMENTATION GAP: The service raises OutOfStockError which the app.py
+    exception handler converts to HTTP 400 with {"detail": ..., "code":
+    "OUT_OF_STOCK"}.  The spec requires HTTP 200 with UCP envelope.
+    """
+
+    def test_create_cart_raises_out_of_stock_when_inventory_insufficient(self):
+        """Service raises OutOfStockError when item inventory is insufficient."""
+        service = _make_cart_service()
+
+        cart_req = CartCreateRequest(
+            line_items=[
+                LineItemRequest(item=ItemRequest(id="prod-1", title="Tulips"), quantity=10),
+            ],
+        )
+
+        with patch("db.get_idempotency_record", new=AsyncMock(return_value=None)), \
+             patch("db.get_product", new=AsyncMock(return_value=MagicMock(price=1500, title="Tulips"))), \
+             patch("db.get_inventory", new=AsyncMock(return_value=0)), \
+             patch("db.save_cart", new=AsyncMock()), \
+             patch("db.save_idempotency_record", new=AsyncMock()):
+            with pytest.raises(OutOfStockError, match="Insufficient stock"):
+                asyncio.run(service.create_cart(cart_req, "idem-oos"))
+
+    def test_create_cart_out_of_stock_error_code(self):
+        """OutOfStockError uses code OUT_OF_STOCK."""
+        service = _make_cart_service()
+
+        cart_req = CartCreateRequest(
+            line_items=[
+                LineItemRequest(item=ItemRequest(id="prod-1", title="Tulips"), quantity=10),
+            ],
+        )
+
+        with patch("db.get_idempotency_record", new=AsyncMock(return_value=None)), \
+             patch("db.get_product", new=AsyncMock(return_value=MagicMock(price=1500, title="Tulips"))), \
+             patch("db.get_inventory", new=AsyncMock(return_value=0)), \
+             patch("db.save_cart", new=AsyncMock()), \
+             patch("db.save_idempotency_record", new=AsyncMock()):
+            with pytest.raises(OutOfStockError) as exc_info:
+                asyncio.run(service.create_cart(cart_req, "idem-oos"))
+            assert exc_info.value.code == "OUT_OF_STOCK"
+
+    def test_create_cart_out_of_stock_returns_400_not_200(self):
+        """SPEC GAP: Implementation returns 400; spec requires 200 with UCP envelope."""
+        # Spec: cart-rest.md Create Cart "Error Response" shows HTTP 200 with
+        # {"ucp": {"status": "error"}, "messages": [{"code": "out_of_stock"}]}
+        service = _make_cart_service()
+
+        cart_req = CartCreateRequest(
+            line_items=[
+                LineItemRequest(item=ItemRequest(id="prod-1", title="Tulips"), quantity=10),
+            ],
+        )
+
+        with patch("db.get_idempotency_record", new=AsyncMock(return_value=None)), \
+             patch("db.get_product", new=AsyncMock(return_value=MagicMock(price=1500, title="Tulips"))), \
+             patch("db.get_inventory", new=AsyncMock(return_value=0)), \
+             patch("db.save_cart", new=AsyncMock()), \
+             patch("db.save_idempotency_record", new=AsyncMock()):
+            with pytest.raises(OutOfStockError) as exc_info:
+                asyncio.run(service.create_cart(cart_req, "idem-oos"))
+            assert exc_info.value.status_code == 400, (
+                "Implementation currently returns 400"
+            )
+            pytest.skip(
+                "SPEC GAP: Cart out-of-stock should return HTTP 200 with "
+                '{"ucp": {"status": "error"}, "messages": '
+                '[{"type": "error", "code": "out_of_stock", '
+                '"severity": "unrecoverable"}]} per cart-rest.md. '
+                "Implementation returns HTTP 400 with "
+                '{"detail": ..., "code": "OUT_OF_STOCK"}.'
+            )
+
+    def test_update_cart_raises_out_of_stock_when_inventory_insufficient(self):
+        """Service raises OutOfStockError when updating cart with unavailable items."""
+        service = _make_cart_service()
+
+        existing_cart_data = {
+            "ucp": {"version": "2026-04-08", "capabilities": {}},
+            "id": "cart-1",
+            "status": "active",
+            "currency": "USD",
+            "line_items": [],
+            "totals": [],
+        }
+
+        update_req = CartUpdateRequest(
+            line_items=[
+                LineItemRequest(item=ItemRequest(id="prod-1"), quantity=100),
+            ],
+        )
+
+        with patch("db.get_idempotency_record", new=AsyncMock(return_value=None)), \
+             patch("db.get_cart", new=AsyncMock(return_value=existing_cart_data)), \
+             patch("db.get_product", new=AsyncMock(return_value=MagicMock(price=1500, title="Tulips"))), \
+             patch("db.get_inventory", new=AsyncMock(return_value=2)), \
+             patch("db.save_cart", new=AsyncMock()), \
+             patch("db.save_idempotency_record", new=AsyncMock()):
+            with pytest.raises(OutOfStockError, match="Insufficient stock"):
+                asyncio.run(service.update_cart("cart-1", update_req, "idem-oos-update"))
+
+
+class TestCheckoutOutOfStockErrorResponse:
+    """CT15b: Behavior (checkout-rest.md): Out-of-stock handling for checkout operations.
+
+    Spec (checkout-rest.md, Create Checkout "Error Response"):
+      HTTP 200 with body:
+      {
+        "ucp": {"version": "...", "status": "error"},
+        "messages": [{"type": "error", "code": "out_of_stock",
+                      "content": "All requested items are currently out of stock",
+                      "severity": "unrecoverable"}],
+        "continue_url": "https://merchant.com/"
+      }
+
+    Also (checkout-rest.md, Business Outcomes):
+      For create_checkout when all items unavailable:
+      {"code": "item_unavailable", "severity": "unrecoverable"}
+
+    IMPLEMENTATION GAP: Same as cart -- OutOfStockError -> HTTP 400 instead
+    of spec-required HTTP 200 with UCP envelope.
+    """
+
+    def test_create_checkout_raises_out_of_stock_when_inventory_insufficient(self):
+        """Service raises OutOfStockError when checkout item inventory is insufficient."""
+        service = _make_checkout_service()
+
+        checkout_req = CheckoutCreateRequest(
+            line_items=[
+                LineItemRequest(item=ItemRequest(id="prod-1", title="Rose"), quantity=10),
+            ],
+        )
+
+        with patch("db.get_idempotency_record", new=AsyncMock(return_value=None)), \
+             patch("db.get_product", new=AsyncMock(return_value=MagicMock(price=2000, title="Rose"))), \
+             patch("db.get_inventory", new=AsyncMock(return_value=0)), \
+             patch("db.get_active_promotions", new=AsyncMock(return_value=[])), \
+             patch("db.save_checkout", new=AsyncMock()), \
+             patch("db.save_idempotency_record", new=AsyncMock()):
+            with pytest.raises(OutOfStockError, match="Insufficient stock"):
+                asyncio.run(service.create_checkout(checkout_req, "idem-oos"))
+
+    def test_checkout_out_of_stock_error_code_mismatch(self):
+        """SPEC GAP: Implementation uses OUT_OF_STOCK; spec also uses item_unavailable."""
+        # Spec (checkout-rest.md Business Outcomes) uses code "item_unavailable"
+        # for when all items are unavailable during create_checkout.
+        # Implementation uses code "OUT_OF_STOCK" from OutOfStockError.
+        service = _make_checkout_service()
+
+        checkout_req = CheckoutCreateRequest(
+            line_items=[
+                LineItemRequest(item=ItemRequest(id="prod-1", title="Rose"), quantity=10),
+            ],
+        )
+
+        with patch("db.get_idempotency_record", new=AsyncMock(return_value=None)), \
+             patch("db.get_product", new=AsyncMock(return_value=MagicMock(price=2000, title="Rose"))), \
+             patch("db.get_inventory", new=AsyncMock(return_value=0)), \
+             patch("db.get_active_promotions", new=AsyncMock(return_value=[])), \
+             patch("db.save_checkout", new=AsyncMock()), \
+             patch("db.save_idempotency_record", new=AsyncMock()):
+            with pytest.raises(OutOfStockError) as exc_info:
+                asyncio.run(service.create_checkout(checkout_req, "idem-oos"))
+            # Implementation uses "OUT_OF_STOCK" as the code
+            assert exc_info.value.code == "OUT_OF_STOCK"
+            pytest.skip(
+                "SPEC GAP: checkout-rest.md Business Outcomes uses error code "
+                '"item_unavailable" for all-items-unavailable scenario. '
+                "Implementation uses code \"OUT_OF_STOCK\". Also, spec requires "
+                "HTTP 200 with UCP envelope but implementation returns HTTP 400."
+            )

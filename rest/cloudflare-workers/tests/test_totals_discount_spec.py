@@ -329,20 +329,20 @@ class TestFulfillmentAmountNonNegative:
 class TestItemsDiscountNegative:
     """T6: Spec: types/total.json allOf -- when type="discount"|"items_discount", amount exclusiveMaximum: 0."""
 
-    def test_items_discount_type_amount_is_non_positive(self):
-        # Spec: "discount/items_discount: amount <= 0 (always negative)"
-        # Verify items_discount total type (when present) obeys the same sign rule
-        # as discount type.
+    def test_items_discount_type_amount_is_strictly_negative(self):
+        # Spec: types/total.json allOf -- items_discount: exclusiveMaximum: 0
+        # exclusiveMaximum: 0 means amount < 0 (zero is NOT valid)
         total = TotalResponse(type="items_discount", display_text="Item Discount", amount=-200)
-        assert total.amount <= 0, (
-            f"Spec requires items_discount amount <= 0, got {total.amount}"
+        assert total.amount < 0, (
+            f"Spec exclusiveMaximum: 0 means strictly negative, got {total.amount}"
         )
 
-    def test_discount_type_amount_is_non_positive_in_model(self):
-        # Spec: "discount: amount <= 0 (always negative)"
+    def test_discount_type_amount_is_strictly_negative_in_model(self):
+        # Spec: types/total.json allOf -- discount: exclusiveMaximum: 0
+        # exclusiveMaximum: 0 means amount < 0 (zero is NOT valid)
         total = TotalResponse(type="discount", display_text="Discount", amount=-500)
-        assert total.amount <= 0, (
-            f"Spec requires discount amount <= 0, got {total.amount}"
+        assert total.amount < 0, (
+            f"Spec exclusiveMaximum: 0 means strictly negative, got {total.amount}"
         )
 
 
@@ -413,7 +413,7 @@ class TestTotalResponseRequiredFields:
     def test_total_response_serializes_type_and_amount(self):
         # Spec: "Totals entry has type (string, required) and amount (integer, required)"
         total = TotalResponse(type="subtotal", amount=1500)
-        data = total.model_dump(mode="json")
+        data = total.model_dump(mode="json", exclude_none=True)
         assert "type" in data, "Spec requires 'type' field in totals entry"
         assert "amount" in data, "Spec requires 'amount' field in totals entry"
         assert isinstance(data["type"], str), "Spec requires 'type' to be a string"
@@ -434,7 +434,7 @@ class TestCustomTypeTotalsDisplayText:
         standard_types = {"subtotal", "total", "tax", "fulfillment", "discount", "items_discount", "fee"}
 
         custom_total = TotalResponse(type="loyalty_credit", display_text="Loyalty Credit", amount=-100)
-        data = custom_total.model_dump(mode="json")
+        data = custom_total.model_dump(mode="json", exclude_none=True)
 
         assert data["type"] not in standard_types, "This test is for non-standard types"
         assert data.get("display_text") is not None, (
@@ -446,7 +446,7 @@ class TestCustomTypeTotalsDisplayText:
         # This test documents the spec requirement -- a custom type with no
         # display_text is a spec violation.
         custom_total = TotalResponse(type="loyalty_credit", amount=-100)
-        data = custom_total.model_dump(mode="json")
+        data = custom_total.model_dump(mode="json", exclude_none=True)
 
         # The model allows it (no validator), but the spec says MUST.
         # We document this as a known gap: display_text is None.
@@ -541,7 +541,7 @@ class TestAppliedDiscountRequiredFields:
     def test_applied_discount_has_title_amount_automatic(self):
         # Spec: "Applied discount has title (string, required), amount (integer), automatic (boolean)"
         ad = AppliedDiscount(title="Summer Sale", amount=-500, automatic=False, code="SUMMER")
-        data = ad.model_dump(mode="json")
+        data = ad.model_dump(mode="json", exclude_none=True)
 
         assert "title" in data, "Spec requires 'title' field in applied discount"
         assert isinstance(data["title"], str), "Spec requires 'title' to be a string"
@@ -564,7 +564,7 @@ class TestAppliedDiscountPriority:
     def test_applied_discount_has_priority_field(self):
         # Spec: "priority (integer): Application order (lower applied first)"
         ad = AppliedDiscount(title="First", amount=-100, priority=1)
-        data = ad.model_dump(mode="json")
+        data = ad.model_dump(mode="json", exclude_none=True)
         assert "priority" in data, "Spec requires 'priority' field in applied discount"
 
     def test_priority_is_integer_or_none(self):
@@ -582,7 +582,7 @@ class TestAppliedDiscountMethod:
     def test_applied_discount_has_method_field(self):
         # Spec: "method (string): 'each' (per-item) or 'across' (proportional)"
         ad_each = AppliedDiscount(title="Per Item", amount=-100, method="each")
-        data = ad_each.model_dump(mode="json")
+        data = ad_each.model_dump(mode="json", exclude_none=True)
         assert "method" in data, "Spec requires 'method' field in applied discount"
         assert data["method"] == "each"
 
@@ -606,7 +606,7 @@ class TestAllocationJsonPath:
     def test_allocation_has_path_field(self):
         # Spec: "allocations: JSONPath-based allocation, path format $.line_items[N]"
         alloc = Allocation(path="$.line_items[0]", amount=-200)
-        data = alloc.model_dump(mode="json")
+        data = alloc.model_dump(mode="json", exclude_none=True)
         assert "path" in data, "Spec requires 'path' field in allocation"
         assert "amount" in data, "Spec requires 'amount' field in allocation"
 
@@ -707,7 +707,7 @@ class TestRejectedCodesMessages:
             code="discount_code_invalid",
             content="The discount code 'BADCODE' is not valid.",
         )
-        data = msg.model_dump(mode="json")
+        data = msg.model_dump(mode="json", exclude_none=True)
 
         assert "type" in data, "Spec: message must have 'type'"
         assert "code" in data, "Spec: message must have 'code'"
@@ -789,7 +789,7 @@ class TestDiscountsObjectFields:
                 AppliedDiscount(title="Promo", amount=-100, code="CODE1"),
             ],
         )
-        data = disco.model_dump(mode="json")
+        data = disco.model_dump(mode="json", exclude_none=True)
 
         assert "codes" in data, "Spec: discounts object must have 'codes' field"
         assert isinstance(data["codes"], list), "Spec: codes must be an array"
@@ -808,3 +808,118 @@ class TestDiscountsObjectFields:
         # applied is optional (None before server computes discounts)
         disco = DiscountsObject()
         assert disco.applied is None
+
+
+# ---------------------------------------------------------------------------
+# T8: totals.json – array composition constraints
+# Spec: totals.json allOf contains type="subtotal" minContains: 1 maxContains: 1
+#        AND contains type="total" minContains: 1 maxContains: 1
+# ---------------------------------------------------------------------------
+
+
+class TestTotalsArrayComposition:
+    """T8: totals.json – array composition constraints."""
+
+    def test_valid_totals_array_with_subtotal_and_total(self):
+        """Spec: totals.json requires exactly 1 subtotal and exactly 1 total entry."""
+        totals = [
+            TotalResponse(type="subtotal", display_text="Subtotal", amount=2000),
+            TotalResponse(type="tax", display_text="Tax", amount=160),
+            TotalResponse(type="total", display_text="Total", amount=2160),
+        ]
+        data = [t.model_dump(mode="json", exclude_none=True) for t in totals]
+        subtotals = [t for t in data if t["type"] == "subtotal"]
+        totals_entries = [t for t in data if t["type"] == "total"]
+        assert len(subtotals) == 1, "Spec requires exactly 1 subtotal entry"
+        assert len(totals_entries) == 1, "Spec requires exactly 1 total entry"
+
+    def test_totals_array_allows_multiple_detail_types(self):
+        """Spec: totals.json allows multiple tax, fee, discount, fulfillment entries."""
+        totals = [
+            TotalResponse(type="subtotal", display_text="Subtotal", amount=5000),
+            TotalResponse(type="tax", display_text="State Tax", amount=300),
+            TotalResponse(type="tax", display_text="Local Tax", amount=50),
+            TotalResponse(type="fee", display_text="Service Fee", amount=100),
+            TotalResponse(type="fulfillment", display_text="Shipping", amount=500),
+            TotalResponse(type="total", display_text="Total", amount=5950),
+        ]
+        data = [t.model_dump(mode="json", exclude_none=True) for t in totals]
+        tax_entries = [t for t in data if t["type"] == "tax"]
+        assert len(tax_entries) == 2, "Spec allows multiple tax entries"
+
+    def test_totals_mincontains_maxcontains_not_enforced_by_model(self):
+        """Spec: totals.json minContains/maxContains constraints are JSON Schema-level."""
+        # Pydantic cannot enforce minContains/maxContains on list[TotalResponse].
+        # The model allows a totals list with no subtotal or no total.
+        # This documents the spec constraint that must be enforced at the
+        # application layer, not by the model.
+        totals = [
+            TotalResponse(type="tax", display_text="Tax", amount=100),
+        ]
+        data = [t.model_dump(mode="json", exclude_none=True) for t in totals]
+        subtotals = [t for t in data if t["type"] == "subtotal"]
+        assert len(subtotals) == 0, (
+            "Model gap: Pydantic does not enforce minContains/maxContains — "
+            "spec requires exactly 1 subtotal but model allows 0"
+        )
+
+    def test_well_known_total_types(self):
+        """Spec: total.json well-known types: subtotal, items_discount, discount, fulfillment, tax, fee, total."""
+        well_known = ["subtotal", "items_discount", "discount", "fulfillment", "tax", "fee", "total"]
+        for t_type in well_known:
+            t = TotalResponse(type=t_type, amount=100)
+            assert t.type == t_type, f"TotalResponse must accept well-known type '{t_type}'"
+
+
+# ---------------------------------------------------------------------------
+# D10: discount.json – AppliedDiscount method enum and priority minimum
+# Spec: method enum: ["each", "across"], priority minimum: 1
+# ---------------------------------------------------------------------------
+
+
+class TestAppliedDiscountMethodEnum:
+    """D10: discount.json – AppliedDiscount method enum values."""
+
+    @pytest.mark.parametrize("method", ["each", "across"])
+    def test_method_accepts_spec_enum_values(self, method):
+        """Spec: discount.json applied_discount.method enum: ["each", "across"]."""
+        ad = AppliedDiscount(title="Test", amount=-100, method=method)
+        data = ad.model_dump(mode="json", exclude_none=True)
+        assert data["method"] == method, (
+            f"AppliedDiscount must accept spec method '{method}'"
+        )
+
+    def test_method_is_str_not_literal(self):
+        """Spec: discount.json method enum but model uses plain str."""
+        # The spec defines method as enum: ["each", "across"] but the Pydantic
+        # model uses `str | None`, so any string is accepted.
+        ad = AppliedDiscount(title="Test", method="invalid")
+        assert ad.method == "invalid", (
+            "Model gap: AppliedDiscount.method is typed as str, not Literal — "
+            "spec enum ['each', 'across'] is not enforced"
+        )
+
+
+class TestAppliedDiscountPriorityMinimum:
+    """D10: discount.json – AppliedDiscount priority minimum constraint."""
+
+    def test_priority_accepts_minimum_value_one(self):
+        """Spec: discount.json applied_discount.priority has minimum: 1."""
+        ad = AppliedDiscount(title="First", amount=-100, priority=1)
+        data = ad.model_dump(mode="json", exclude_none=True)
+        assert data["priority"] == 1, "priority must accept minimum value 1"
+
+    def test_priority_accepts_higher_values(self):
+        """Spec: discount.json applied_discount.priority accepts integers >= 1."""
+        ad = AppliedDiscount(title="Second", amount=-50, priority=5)
+        assert ad.priority == 5
+
+    def test_priority_minimum_not_enforced_by_model(self):
+        """Spec: discount.json priority minimum: 1 but model uses plain int."""
+        # The spec requires minimum: 1, but Pydantic model uses `int | None`
+        # without Field(ge=1), so 0 and negative values are accepted.
+        ad = AppliedDiscount(title="Bad", priority=0)
+        assert ad.priority == 0, (
+            "Model gap: AppliedDiscount accepts priority=0 "
+            "(spec requires minimum: 1 but model uses plain int)"
+        )

@@ -282,8 +282,8 @@ class CheckoutCompleteRequest(BaseModel):
 
 
 class CheckoutLink(BaseModel):
-  rel: str
-  href: str
+  type: str
+  url: str
   title: str | None = None
 
 
@@ -525,8 +525,8 @@ class CartUpdateRequest(BaseModel):
 
 
 class CartLink(BaseModel):
-  rel: str
-  href: str
+  type: str
+  url: str
   title: str | None = None
 
 
